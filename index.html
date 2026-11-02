@@ -6,6 +6,8 @@
     <title>BRAT — A Fic da Bíblia</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     
     <script>
         tailwind.config = {
@@ -328,6 +330,13 @@
             border-radius: 3px;
         }
     
+        .brat-author-note {
+            margin: 0 0 .4rem; padding: 14px 16px; border-radius: 14px; text-align: left;
+            border: 1px dashed rgba(140,255,11,.55); background: rgba(140,255,11,.07);
+            font-size: .92em; line-height: 1.6;
+        }
+        .brat-author-note strong { display: block; margin-bottom: .35rem; font-weight: 800; letter-spacing: .03em; }
+        .brat-author-note p { margin: .55em 0 0; text-indent: 0; }
         .brat-chapter-divider {
             display: flex; align-items: center; justify-content: center;
             width: 85%; margin: 2.7em auto; color: inherit; opacity: 0.8;
@@ -345,6 +354,254 @@
             .brat-chapter-divider { width: 92%; margin: 2.1em auto; }
             .brat-chapter-divider span { margin: 0 0.8em; }
         }
+
+        /* Google Docs / Wattpad-style paragraph comments */
+        /* IMPORTANTE: sem `transform` aqui. Um ancestral com transform vira o "containing block" de todo
+           elemento position:fixed dentro dele (bottom sheet, backdrop, botões flutuantes), e o pop-up de
+           comentários passava a ser posicionado em relação ao capítulo inteiro (abria no FIM da página)
+           em vez de em relação à tela. O centro é feito com margem negativa. */
+        #tab-read {
+            --read-w: min(1200px, calc(100vw - 2rem));
+            width: var(--read-w);
+            position: relative;
+            left: 50%;
+            margin-left: calc(var(--read-w) / -2);
+        }
+        .reader-comments-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            gap: 1rem;
+            align-items: start;
+        }
+        #reader-paper { min-width: 0; }
+        #reader-comments {
+            position: sticky;
+            top: 1.25rem;
+            max-height: calc(100vh - 2.5rem);
+            overflow-y: auto;
+        }
+        .commentable-paragraph {
+            position: relative;
+            border-radius: 7px;
+            padding: 5px 8px;
+            margin-left: -8px;
+            margin-right: -8px;
+            cursor: pointer;
+            transition: background .15s ease, box-shadow .15s ease;
+            scroll-margin-top: 100px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        @media (hover: hover) {
+            .commentable-paragraph:hover { background: rgba(140,255,11,.07); }
+        }
+        .commentable-paragraph.comment-active {
+            background: rgba(140,255,11,.13);
+            box-shadow: inset 3px 0 #8cff0b;
+        }
+        .commentable-paragraph.has-comments::after {
+            content: attr(data-comment-count);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            height: 20px;
+            margin-left: 8px;
+            padding: 0 5px;
+            border-radius: 10px;
+            background: #e8e8e8;
+            color: #171717;
+            font-size: 10px;
+            font-weight: 700;
+            vertical-align: middle;
+        }
+        .comment-selection-bar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            border: 1px solid rgba(140,255,11,.35);
+            border-radius: 12px;
+            background: rgba(140,255,11,.07);
+            font-size: 11px;
+        }
+        .comment-card {
+            padding: 12px;
+            border: 1px solid rgba(140,255,11,.22);
+            border-radius: 13px;
+            background: #fff;
+            color: #3d3834;
+        }
+        .comment-quote {
+            padding: 7px 9px;
+            margin: 8px 0;
+            border-left: 3px solid #8cff0b;
+            background: #f7f8f2;
+            color: #625d55;
+            font-size: 11px;
+            font-style: italic;
+        }
+        .comment-delete {
+            color: #9b5555;
+            font-size: 10px;
+            text-decoration: underline;
+        }
+        .comment-input {
+            width: 100%;
+            min-height: 82px;
+            resize: vertical;
+            border: 1px solid #ddd8cd;
+            border-radius: 10px;
+            padding: 9px;
+            outline: none;
+            font-size: 12px;
+            color: #3d3834;
+            background: #fff;
+        }
+        .comment-input:focus { border-color: #8cff0b; box-shadow: 0 0 0 2px rgba(140,255,11,.12); }
+        .comment-status { font-size: 10px; color: #777168; }
+        @media (hover: hover) {
+            .read-dark .commentable-paragraph:hover { background: rgba(140,255,11,.10); }
+        }
+        .read-dark .commentable-paragraph.comment-active { background: rgba(140,255,11,.14); }
+        /* Blocos que não são <p> (chat, poema, linhas recuadas): o contador vira um selo no canto,
+           senão viraria um item flex de largura total dentro do .chat-block */
+        .commentable-block.has-comments::after {
+            position: absolute; top: 4px; right: 4px; margin: 0;
+        }
+        /* Chat: cada MENSAGEM é um "parágrafo" comentável (há chats com 60+ mensagens). Sem padding vertical e
+           com largura compensada, para o espaçamento e o alinhamento dos balões ficarem idênticos ao original. */
+        .chat-block > .commentable-paragraph { width: calc(100% + 16px); padding-top: 0; padding-bottom: 0; }
+        .chat-block > .commentable-block.has-comments::after { top: -4px; right: -4px; }
+        /* Trecho muito longo (seleção de vários parágrafos) rola em vez de ocupar a tela toda */
+        .comment-quote { max-height: 9.5em; overflow-y: auto; overflow-wrap: anywhere; }
+
+        @media (max-width: 800px) {
+            .reader-comments-layout { grid-template-columns: minmax(0, 1fr); }
+            #tab-read { --read-w: calc(100vw - 1.25rem); }
+            #reader-comments {
+                position: fixed; top: auto; left: 0; right: 0;
+                bottom: var(--kb-offset, 0px);                 /* sobe acima do teclado virtual (ver JS) */
+                width: 100%; box-sizing: border-box;
+                max-height: 88vh;                               /* fallback: navegadores sem dvh */
+                max-height: min(88dvh, 780px, var(--vv-max, 100dvh));
+                overflow-y: auto; overscroll-behavior: contain;
+                z-index: 1002; border-radius: 22px 22px 0 0;
+                transform: translateY(105%); visibility: hidden;
+                transition: transform .25s ease, visibility .25s;
+                padding: 20px 18px max(22px, env(safe-area-inset-bottom));
+            }
+            #reader-comments.comments-open { transform: translateY(0); visibility: visible; }
+            #comments-backdrop.comments-open { display: block; }
+            /* `body #id` (especificidade maior): as regras base destes botões vêm DEPOIS deste @media e, com a
+               mesma especificidade, o `display: none` delas anulava o `display: flex` daqui (botões nunca apareciam). */
+            body #comments-floating-button { display: flex; }
+            body #comments-close-button { display: inline-flex; }
+            body #comment-selection-chip.visible { display: inline-flex; }
+            .comment-input { font-size: 16px; }   /* 16px evita o zoom automático do iOS ao focar */
+            #comment-author { font-size: 16px; }
+            #reader-paper { padding-left: 18px; padding-right: 18px; }
+        }
+
+        #comments-backdrop { display: none; position: fixed; inset: 0; z-index: 1001; background: rgba(0,0,0,.64); touch-action: none; -webkit-tap-highlight-color: transparent; }
+        #comments-floating-button { display: none; position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); right: 18px; z-index: 900; align-items: center; gap: 7px; padding: 12px 17px; border-radius: 100px; background: #e8e8e8; color: #171717; font-size: 13px; font-weight: 800; box-shadow: 0 6px 24px #0005; }
+        #comments-close-button { display: none; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; order: 2; flex: none; border-radius: 50%; background: rgba(125,125,125,.13); font-size: 22px; }
+        body.comments-modal-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
+        /* "Comentar trecho": aparece no celular quando há texto selecionado (o pop-up só abre ao tocar nele) */
+        #comment-selection-chip { display: none; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(78px + env(safe-area-inset-bottom)); z-index: 950; align-items: center; gap: 7px; padding: 11px 18px; border-radius: 100px; background: #1a1816; color: #8cff0b; border: 1px solid #8cff0b; font-size: 13px; font-weight: 800; white-space: nowrap; box-shadow: 0 6px 24px #0006; -webkit-tap-highlight-color: transparent; }
+        #reader-comments.read-dark { background: #1a1816 !important; color: #f7f7f7 !important; border-color: #444 !important; }
+        #reader-comments.read-dark .comment-card { background: #282622; border-color: #555; color: #fff; }
+        #reader-comments.read-dark .comment-quote { background: #34332e; color: #eee; }
+        #reader-comments.read-dark .comment-input { background: #292722; border-color: #666; color: #fff; }
+        #reader-comments.read-dark .comment-input::placeholder { color: #bcb7af; }
+        #reader-comments.read-dark .comment-status { color: #ccc; }
+        #reader-comments.read-dark .comment-selection-bar { background: #282d20; }
+        #reader-comments.read-dark #comments-total { color: #1a1816 !important; }
+        #reader-comments.read-dark .comment-delete { color: #ffb0b0 !important; }
+        /* Indicadores discretos e legíveis em ambos os temas */
+        .read-dark .commentable-paragraph.has-comments::after,
+        .read-dark .commentable-block.has-comments::after { background: #e8e8e8; color: #171717; }
+        .read-dark #comments-floating-button { background: #e8e8e8; color: #171717; }
+        @media (min-width: 801px) { #comments-backdrop, #comments-floating-button, #comments-close-button, #comment-selection-chip { display: none !important; } }
+
+
+        /* Barra de leitura acompanha a tela durante toda a rolagem. */
+        body.reading-chapter #main-header { display: none !important; }
+        body.reading-chapter #tab-read { padding-top: 82px; }
+        body.reading-chapter #reader-controls {
+            position: fixed !important;
+            top: calc(12px + env(safe-area-inset-top, 0px));
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(740px, calc(100vw - 24px));
+            box-sizing: border-box;
+            z-index: 990;
+            border-radius: 18px;
+            box-shadow: 0 8px 28px rgba(0,0,0,.16);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        @media (max-width: 640px) {
+            body.reading-chapter #tab-read { padding-top: 74px; }
+            body.reading-chapter #reader-controls { padding: 12px; }
+        }
+
+
+        /* Taça interativa e notificação de mensagem */
+        #wine-message-button { display:inline-flex; align-items:center; justify-content:center; width:35px; height:35px; flex-shrink:0; border:1px solid #d5d5d5; border-radius:10px; background:#e8e8e8; cursor:pointer; transition:background .2s, transform .2s; }
+        #wine-message-button:hover { background:#d8d8d8; transform:translateY(-2px); }
+        #wine-message-button:focus-visible { outline:3px solid #777; outline-offset:2px; }
+        #wine-message-button svg { width:26px; height:26px; overflow:visible; }
+        #wine-liquid { transform-box:fill-box; transform-origin:center bottom; transition:transform 1.05s cubic-bezier(.4,0,.2,1),opacity 1.05s ease; }
+        #wine-message-button.is-empty #wine-liquid { transform:scaleY(0); opacity:0; }
+        #wine-notification { position:fixed; top:calc(88px + env(safe-area-inset-top,0px)); right:16px; width:min(350px,calc(100vw - 32px)); box-sizing:border-box; z-index:1000; padding:16px 42px 16px 17px; border-radius:17px; background:#f5f5f5; color:#242424; border:1px solid #cfcfcf; box-shadow:0 12px 35px #0003; opacity:0; visibility:hidden; transform:translateY(-12px); transition:opacity .25s,transform .25s,visibility .25s; pointer-events:none; }
+        #wine-notification.visible { opacity:1; visibility:visible; transform:translateY(0); pointer-events:auto; }
+        #wine-notification .wine-sender { font-size:12px; font-weight:800; margin-bottom:7px; }
+        #wine-notification .wine-text { font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
+        #wine-notification .wine-close { position:absolute; right:10px; top:7px; padding:6px 10px; font-size:22px; color:inherit; background:transparent; cursor:pointer; }
+        body.reading-chapter:has(#reader-paper.read-dark) #wine-notification { background:#282828; color:#f7f7f7; border-color:#555; }
+        @media(max-width:640px) { #wine-message-button { width:32px; height:32px; } #wine-notification { top:calc(78px + env(safe-area-inset-top,0px)); } }
+        @media(prefers-reduced-motion:reduce) { #wine-liquid,#wine-notification { transition-duration:.01ms; } }
+
+
+/* Mapa imersivo da BRAT: mapa real de São Paulo (Leaflet + OpenStreetMap/CARTO) */
+#tab-mapa{position:relative;left:50%;width:min(980px,calc(100vw - 1.5rem));transform:translateX(-50%)}
+.bm{position:relative;isolation:isolate;height:clamp(500px,calc(100svh - 150px),780px);border-radius:26px;overflow:hidden;background:#0b0e09;border:1px solid #8cff0b40;box-shadow:0 18px 50px #0008}
+#brat-map-canvas{position:absolute;inset:0;background:#0b0e09}
+#brat-map-canvas.bm-boost .leaflet-tile-pane{filter:brightness(1.6) contrast(1.15)}
+.bm-vignette{position:absolute;inset:0;z-index:450;pointer-events:none;background:radial-gradient(ellipse at 50% 45%,transparent 48%,#050704b8 100%),linear-gradient(#0b0e09d0,transparent 20%)}
+.bm-title{position:absolute;z-index:1100;left:14px;top:14px;display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-radius:16px;background:#0b0e09d9;backdrop-filter:blur(8px);border:1px solid #8cff0b40;color:#f2f8e8;font-size:14px;font-weight:700}
+.bm-title span{font-size:10px;font-weight:400;color:#9db08a}
+.bm .leaflet-bar{border:0;box-shadow:0 4px 14px #000a}
+.bm .leaflet-bar a{background:#0b0e09e6;color:#e9f5d8;border-color:#8cff0b33}
+.bm .leaflet-bar a:hover{background:#1a2410;color:#8cff0b}
+.bp-wrap{background:none;border:0}
+.bp{position:relative;width:0;height:0}
+.bp-dot{position:absolute;left:-7px;top:-7px;width:14px;height:14px;border-radius:50%;background:#8cff0b;border:2px solid #0b0e09;box-shadow:0 0 0 4px #8cff0b40,0 0 18px 4px #8cff0b99}
+.bp.hot .bp-dot{background:#ff6a3d;box-shadow:0 0 0 4px #ff6a3d44,0 0 20px 5px #ff6a3daa}
+.bp.hot .bp-dot::after{content:"";position:absolute;inset:-9px;border-radius:50%;border:2px solid #ff6a3d;animation:bpPulse 2.8s ease-out infinite}
+@keyframes bpPulse{from{transform:scale(.55);opacity:.9}to{transform:scale(1.8);opacity:0}}
+.bp-label{position:absolute;white-space:nowrap;font-size:11px;font-weight:700;color:#f2f8e8;background:#0b0e09e8;border:1px solid #8cff0b55;border-radius:999px;padding:5px 10px;box-shadow:0 4px 14px #000a;cursor:pointer;transition:background .15s,color .15s}
+.bp.hot .bp-label{border-color:#ff6a3d88}
+.bp.t .bp-label{left:0;bottom:16px;transform:translateX(-50%)}
+.bp.b .bp-label{left:0;top:16px;transform:translateX(-50%)}
+.bp.r .bp-label{left:16px;top:0;transform:translateY(-50%)}
+.bp.l .bp-label{right:16px;top:0;transform:translateY(-50%)}
+.bp.on .bp-label{background:#8cff0b;color:#0b0e09;border-color:#8cff0b}
+.bp.hot.on .bp-label{background:#ff6a3d;color:#190802;border-color:#ff6a3d}
+.bm-sheet{position:absolute;z-index:1100;left:10px;right:10px;bottom:10px;max-width:520px;padding:14px 16px;border-radius:20px;background:#0b0e09eb;backdrop-filter:blur(10px);border:1px solid #8cff0b40;color:#eef6e2;font-size:12px;line-height:1.5}
+.bm-sheet h2{font-size:15px;font-weight:700}
+.bm-sheet p{color:#aebd9c;margin-top:2px}
+.bm-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:11px}
+.bm-btn{padding:8px 14px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid #8cff0b;transition:scale .12s}
+.bm-go{background:#8cff0b;color:#0b0e09}
+.bm-ghost{background:transparent;color:#8cff0b}
+.bm-btn:active{scale:.96}
+.bm-btn:focus-visible,#brat-map-canvas .leaflet-marker-icon:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.bm-soon{color:#aebd9c;font-size:11px}
+.bm-note{font-size:10px;color:#3d3834b3;margin-top:8px;text-align:center}
+@media(prefers-reduced-motion:reduce){.bp.hot .bp-dot::after{animation:none}}
 </style>
 </head>
 <body class="min-h-screen pb-16">
@@ -367,12 +624,10 @@
 
             <!-- Nav Tabs -->
             <div class="flex items-center space-x-1 text-xs sm:text-sm font-medium">
-                <button id="nav-biblia" onclick="switchTab('biblia')" class="nav-btn px-4 py-1.5 rounded-full bg-bible-gold text-bible-darkCard font-semibold shadow transition">
-                    Bíblia
-                </button>
                 <button id="nav-capitulos" onclick="switchTab('capitulos')" class="nav-btn px-4 py-1.5 rounded-full text-bible-goldLight/80 hover:text-white hover:bg-white/10 transition">
                     Capítulos
                 </button>
+                <button id="nav-mapa" onclick="switchTab('mapa')" class="nav-btn px-4 py-1.5 rounded-full text-bible-goldLight/80 hover:text-white hover:bg-white/10 transition">Mapa</button>
             </div>
         </nav>
     </header>
@@ -480,11 +735,11 @@
 
         <!-- TAB CONTENT 2: CAPÍTULOS -->
         <div id="tab-capitulos" class="tab-content hidden space-y-6">
-            <!-- Chapters Index Section (Exactly 7 Chapters) -->
+            <!-- Chapters Index Section (Chapters) -->
             <section class="space-y-4">
                 <div class="flex items-center justify-between">
                     <h2 class="text-xl font-bold text-bible-dark flex items-center gap-2">
-                        Capítulos <span class="text-sm font-normal text-bible-gold font-semibold bg-bible-goldLight px-2.5 py-0.5 rounded-full border border-bible-gold/20">(7)</span>
+                        Capítulos <span class="text-sm font-normal text-bible-gold font-semibold bg-bible-goldLight px-2.5 py-0.5 rounded-full border border-bible-gold/20">(8)</span>
                     </h2>
                 </div>
 
@@ -494,7 +749,7 @@
                         type="text" 
                         id="chapter-search" 
                         oninput="filterChapters()"
-                        placeholder="Ir para o capítulo... (1 a 7)" 
+                        placeholder="Ir para o capítulo... (1 a 8)" 
                         class="w-full bg-bible-card text-bible-dark text-sm rounded-2xl px-4 py-3 pl-10 border border-bible-gold/30 focus:outline-none focus:ring-2 focus:ring-bible-gold/50 shadow-sm transition placeholder:text-bible-text/40"
                     >
                     <svg class="w-4 h-4 text-bible-gold absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -508,6 +763,18 @@
                 </div>
             </section>
         </div>
+
+
+        <!-- MAPA IMERSIVO DA HISTÓRIA -->
+        <section id="tab-mapa" class="tab-content hidden">
+            <div class="bm" role="group" aria-label="Mapa dos lugares da história em São Paulo">
+                <div id="brat-map-canvas"></div>
+                <div class="bm-vignette"></div>
+                <div class="bm-title">Mapa BRAT<span>São Paulo</span></div>
+                <div id="map-place-detail" class="bm-sheet" aria-live="polite"></div>
+            </div>
+            <p id="bm-credit" class="bm-note">🔥 marca locais de encontros íntimos · Posições aproximadas no mapa</p>
+        </section>
 
         <!-- DEDICATED INTERNAL READING PAGE / VIEW -->
         <div id="tab-read" class="tab-content hidden space-y-4">
@@ -531,9 +798,22 @@
                     <button id="theme-toggle-btn" onclick="toggleReadTheme()" class="p-1.5 text-xs rounded-lg bg-bible-goldLight text-bible-dark border border-bible-gold/30 hover:bg-bible-gold hover:text-white transition" title="Alternar tema de leitura">
                         🌙
                     </button>
+                    <button id="wine-message-button" type="button" onclick="showWineMessage()" aria-label="Beber vinho e receber uma mensagem" title="Uma taça de vinho?">
+                        <svg viewBox="0 0 32 32" role="img" aria-hidden="true">
+                            <path d="M8 4h16v7c0 7-3.3 11-8 11s-8-4-8-11V4Z" fill="none" stroke="#666" stroke-width="1.7" stroke-linejoin="round"/>
+                            <path id="wine-liquid" d="M9.8 10.5h12.4v1.2c0 5.7-2.6 8.4-6.2 8.4s-6.2-2.7-6.2-8.4v-1.2Z" fill="#8c304c"/>
+                            <path d="M16 22v6m-6 1h12" fill="none" stroke="#666" stroke-width="1.7" stroke-linecap="round"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
 
+            <div id="wine-notification" role="status" aria-live="polite" aria-atomic="true">
+                <button type="button" class="wine-close" onclick="dismissWineMessage()" aria-label="Fechar mensagem">×</button>
+                <div class="wine-sender" id="wine-sender"></div>
+                <div class="wine-text" id="wine-text"></div>
+            </div>
+            <div class="reader-comments-layout">
             <!-- Chapter Content Display Container -->
             <article id="reader-paper" class="bg-bible-card rounded-3xl p-6 sm:p-8 shadow-xl border border-bible-gold/20 space-y-6 transition-colors">
                 <header class="border-b border-bible-gold/20 pb-4 text-center space-y-1">
@@ -564,13 +844,48 @@
                     </button>
                 </footer>
             </article>
+
+            <!-- Comments sidebar / mobile bottom sheet -->
+            <aside id="reader-comments" class="bg-white rounded-3xl p-4 shadow-lg border border-bible-gold/25">
+                <div class="flex items-center justify-between gap-2 mb-2">
+                    <div>
+                        <h2 id="comments-dialog-title" class="text-sm font-bold text-bible-dark">Comentários</h2>
+                        <p class="text-[10px] text-bible-text/60">Anotações por parágrafo ou trecho</p>
+                    </div>
+                    <button id="comments-close-button" type="button" onclick="closeCommentsModal()" aria-label="Fechar comentários">×</button>
+                    <span id="comments-total" class="text-[10px] rounded-full px-2 py-1 bg-bible-goldLight text-bible-dark font-bold">0</span>
+                </div>
+                <div class="comment-selection-bar">
+                    <span id="comment-target-label" class="flex-1">Toque ou clique em um parágrafo para comentar.</span>
+                    <button type="button" onclick="clearCommentTarget()" class="text-bible-text/60 underline">Limpar</button>
+                </div>
+                <div id="comment-quote-preview" class="hidden comment-quote"></div>
+                <label for="comment-author" class="block text-[11px] font-bold text-bible-dark mb-1">Seu nome ou apelido <span aria-hidden="true">*</span></label>
+                <input id="comment-author" class="comment-input mb-2" type="text" maxlength="30" autocomplete="off" autocorrect="off" autocapitalize="words" data-form-type="other" data-lpignore="true" placeholder="Como você quer aparecer nos comentários?" required style="width:100%;min-height:40px;resize:none;" />
+                <textarea id="comment-draft" class="comment-input" autocomplete="off" placeholder="Escreva seu comentário..."></textarea>
+                <button type="button" onclick="addParagraphComment()" class="w-full mt-2 rounded-xl bg-bible-darkCard text-bible-gold px-3 py-2.5 text-xs font-bold hover:bg-black transition">Adicionar comentário</button>
+                <p id="comments-status" class="comment-status mt-2">Preparando armazenamento local...</p>
+                <div class="border-t border-bible-gold/20 my-4"></div>
+                <div id="comments-list" class="space-y-3">
+                    <p class="text-xs text-bible-text/60 italic">Selecione um parágrafo para ver os comentários.</p>
+                </div>
+            </aside>
+            </div>
+            <div id="comments-backdrop" onclick="closeCommentsModal()" aria-hidden="true"></div>
+            <button id="comments-floating-button" type="button" onclick="openCommentsModal()" aria-label="Abrir comentários">💬 Comentários <span id="comments-floating-total">0</span></button>
+            <button id="comment-selection-chip" type="button" onclick="commentOnPendingSelection()" aria-label="Comentar o trecho selecionado">💬 Comentar trecho</button>
         </div>
 
     </main>
 
+    <!-- Firebase (opcional): configure as credenciais no bloco firebaseConfig abaixo -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
     <!-- Script Logic -->
     <script>
-        // Exactly 7 Chapters Full Narrative Content Data
+        // Chapters Full Narrative Content Data
         const chaptersData = [
             {
                 id: 1,
@@ -2476,6 +2791,325 @@
                     "— Eu também — Lorena é sincera. — Vem cá.",
                     "Lorena não sabe exatamente de onde vem o ímpeto, mas abre os braços, e Eduarda leva um segundo, mas se aproxima, encaixando-se no abraço dela. Como estão deitadas, é um pouco desajeitado, mas logo Eduarda se ajeita, colocando a cabeça no peito de Lorena, um braço sobre sua barriga e uma perna sobre suas coxas. Ela sente Eduarda respirar fundo, relaxando, e só consegue pensar em como aquilo era bom. Não lembrava a última vez que tinha verdadeiramente abraçado a amiga, e não demora muito para o sono gostoso a embalar, nos braços de Eduarda."
                 ]
+            },
+            {
+                id: 8,
+                title: "casual",
+                content: [
+                    "<div class=\"brat-author-note\"><strong>Notas da autora</strong><p>oi queridas(os), promessa é dívida, como falei!</p><p>só um detalhe que gostaria de falar com vocês: procurem ter paciência com as(os) autoras(es) que não estiverem, assim como estou agora, postando em outras plataformas. eu só to fazendo isso porque prometi e minha querida amiga Cami (autora da grande fic da Duda Hacker! beijos, diva!) doou seu tempo e disposição pra não só criar o site, mas também revisá-lo e postar esse capítulo, mas não é exatamente o lugar ideal para postar. por isso, por favor tentem entender as pessoas que preferem aguardar o ao3 voltar, assim como eu possivelmente esperarei para postar o próximo, depois desse.</p><p>Ah! e agora temos a magia de comentar em cada parágrafo, caso assim queira! vou adorar saber o que vocês acharam!</p><p>espero que gostem!!</p><p>este capítulo foi escrito ao som de, principalmente:<br>casual - chappell roan<br>out of my league - fitz and the tantrums</p></div>",
+                    "<div class=\"brat-chapter-divider\"><p><span>◇</span></p></div>",
+                    "Eduarda abre os olhos. Deve ser cedo, já que o sol bate suave contra o piso da sala e o frio da madrugada ainda a castiga, mesmo com o cobertor. Ela se ajeita melhor no abraço de Lorena, com preguiça de levantar — ali estava muito confortável. A garota se mexe um pouco e Eduarda fica com receio de tê-la acordado tão cedo, pensando que receberia alguma reclamação, mas Lorena apenas esfrega os olhos com a mão livre, inclinando seu rosto para olhá-la.",
+                    "— Bom dia — Lorena fala sorrindo, a voz um pouco rouca de sono. — Dormiu bem?",
+                    "— Dormi ótima — Eduarda é sincera, e devolve o sorriso. — Fazia um tempo que a gente não dormia assim.",
+                    "— É… Eu senti falta. — Lorena começa um carinho preguiçoso em suas costas, e Eduarda deita de novo no peito dela.",
+                    "— Eu também — Eduarda admite e aperta um pouco o abraço, usando o calor de Lorena para se esquentar.",
+                    "Elas ficam assim por alguns momentos, apenas aproveitando aquela preguiça gostosa.",
+                    "— O Paulinho e a Gerluce saíram? — Lorena pergunta e Eduarda levanta um pouco a cabeça, vendo que o colchão ao lado delas, onde o casal deveria estar dormindo, estava vazio.",
+                    "— Hm… Acho que sim.",
+                    "Ela estranha o sumiço dos dois, nem tinha percebido que levantaram. Normalmente, nas vezes em que dormiam na mesma casa, Eduarda era a primeira a acordar, e acabava fazendo várias coisas até que todos levantassem para tomar café juntos. Mas, tudo bem, poderiam ter despertado e ido à padaria, por exemplo, então ela só dá de ombros, continuando ali.",
+                    "— Sabe o que tá faltando nessa nossa amizade colorida? — Lorena solta, e Eduarda até se sobressalta de leve, porque é muito inusitado a amiga citar o assunto, ainda mais tão cedo no dia.",
+                    "— O quê?",
+                    "— Sexo matinal. — A voz de Lorena é casual, e Eduarda acha que está alucinando.",
+                    "— Q-quê?",
+                    "Parecia absurdo que Lorena estivesse sugerindo aquilo, mas… Será que era tão maluco assim? Elas já transavam semi-regularmente. Elas já se entendiam, sabiam o que eram… Talvez não precisassem mais da desculpa do álcool. Sendo sincera, a mera menção à palavra sexo já havia despertado Eduarda por completo. De repente, ela fica muito consciente do encaixe de seu quadril no de Lorena, com uma de suas pernas por cima das dela.",
+                    "— Sabe… — Lorena continua o carinho em suas costas, dessa vez usando a ponta das unhas, mesmo curtas, da lombar até perto da nuca e voltando. — Eu acho que a gente pode… Evoluir.",
+                    "— Você acha? — Eduarda se sente atordoada, inclinando a cabeça para cima, seus lábios quase tocando a pele do pescoço de Lorena.",
+                    "Lorena ri, e o movimento faz com que seu corpo trema de leve, seu quadril roçando na intimidade de Eduarda, que usava apenas um short fino de pijama de Lorena, sem calcinha. Ela arfa contra o pescoço de Lorena, que solta um suspiro, levantando um pouco a cabeça e se aproximando de seu ouvido.",
+                    "— Você já tá com tesão, não tá? — A voz de Lorena é baixa, e sua mão direita sobe pelas costas de Eduarda, chegando na base de sua nuca, iniciando um cafuné perigoso. Eduarda não responde, seu corpo inquieto, porque Lorena tinha razão. Estava morrendo de tesão. — Eu tô sentindo você na minha perna, Eduarda.",
+                    "Lorena sobe sua outra mão pelo braço de Eduarda, que estava repousando sobre sua barriga. Ela traça um caminho até o ombro, começando a brincar com a alça fina da regata do pijama. Eduarda permanece imóvel, com medo de qualquer movimento brusco, mas então Lorena desce a mão que estava em sua nuca até sua lombar, abraçando Eduarda mais forte, forçando seu quadril a pressionar de novo no alto da coxa dela.",
+                    "Eduarda já sente a buceta doer, e aquela pressão é exatamente o que ela mais necessita. Quase involuntariamente, ela começa a roçar ali, com o incentivo do toque de Lorena em suas costas, subindo pelos cabelos, puxando, e respirando pesado em seu ouvido.",
+                    "— Me usa, Eduarda — Lorena quase sussurra, e Eduarda obedece, aumentando o ritmo do quadril.",
+                    "— Caralho, Lorena…",
+                    "Eduarda sente o prazer se acumular rápido, muito rápido. Era aquele tipo de tesão louco que aparece de manhã cedo, e ele a consome cada vez mais. Ela então se apoia nos braços e se ajeita, montando na perna de Lorena, afundando seu rosto no pescoço dela, acelerando os movimentos desesperadamente.",
+                    "— Eu gosto de você assim — Lorena fala em seu ouvido, a voz baixa e perigosa. — Gostosa. — Ela deixa um beijo desajeitado e molhado em seu pescoço. — Em cima de mim. — Uma lambida. — Toda molhada. — Um tapa na bunda. — Só pra mim.",
+                    "Eduarda continua se movimentando, cada vez mais rápido, sentindo o ápice se aproximar.",
+                    "— Lo-Lorena… Porra…",
+                    "— Isso, goza gostoso em mim, vai…",
+                    "Ela sente suas pernas começarem a tremer, gemendo sons desconexos no ouvido de Lorena, e-",
+                    "Eduarda abre os olhos.",
+                    "Seu coração bate forte contra o peito de Lorena, que ressoa leve.",
+                    "Puta que pariu. Tinha sido um sonho.",
+                    "Claro que era um sonho, ela pensa, porque tinha sido fácil demais. Acordar transando era o que casais faziam, e elas estavam longe de ser aquilo. Quantas vezes teria que se lembrar de que eram amigas, e nada mais?",
+                    "Eduarda suspira, antes de se apoiar em um dos braços, se afastando com cuidado para não acordar Lorena, já que a garota estava com uma das mãos praticamente em seu peito, por debaixo da blusa. Aquilo com certeza não ajuda, então ela levanta, vendo que o casal no colchão ao lado também ainda dormia, claro, e vai até o banheiro do quarto de Lorena.",
+                    "Ela liga a torneira, esfregando o rosto com a água gelada, ainda sem acreditar que havia mesmo sonhado com aquilo. Eduarda se esforça para ignorar seu clitóris, que ainda lateja do tesão resultante de um sonho erótico, porque não poderia fazer nada em relação àquilo. Não estava na sua própria casa e, mesmo que estivesse, seus amigos estavam dormindo no cômodo ao lado — além de que não estava nem um pouco animada para descobrir o que significaria se masturbar uma segunda vez pensando em Lorena.",
+                    "Ela é pega de surpresa por uma vontade devastadora de que pudesse realizar aquele sonho, de que ela e Lorena não precisassem de todo um protocolo para estarem juntas. Podia ser o tesão falando mais alto, mas Eduarda queria que elas estivessem, agora, dormindo no quarto de Lorena, e que fosse permitido pelas regras que elas transassem quando simplesmente tivessem vontade. Existe, ali no fundo de seu cérebro, uma vozinha que diz que aquilo estava ficando cansativo, ter que pensar em quando poderiam transar, se algo poderia ser iniciado ou não.",
+                    "A verdade é que Eduarda tinha medo de que qualquer passo que ela desse pudesse ser em falso, que qualquer tentativa mais arriscada poderia significar o fim daquele acordo — ou pior, da amizade. Ela tenta se lembrar do quanto aquela amizade era sagrada, e precisava ser protegida a qualquer custo.",
+                    "Só que estava ficando cada vez mais difícil separar igreja e estado.",
+                    "Veja, a Igreja parecia estar bem. Porém, como toda instituição religiosa, cobrava o dízimo regularmente: ainda precisavam daqueles momentos em que tudo era sagrado e nada era profano; precisavam rir, conversar e conviver como amigas — e era muito importante fazer tudo isso vestidas. A Igreja estava bem, sim, mas dizer que Eduarda estava bem com a Igreja eram outros quinhentos.",
+                    "A noite anterior tinha sido um teste. Quando recebeu a mensagem de Gerluce a chamando para uma noite casual de filme entre amigos, seu primeiro impulso foi recusar. Inventar alguma mentira só para que não precisasse ter que ver Lorena tão cedo, ainda mais depois de todas as coisas que achava que poderia-talvez-quem-sabe estar sentindo. Mas foi exatamente por isso que resolveu aceitar o convite: com os outros amigos ali, não era possível sequer cogitar que algo aconteceria entre as duas, então seria mais fácil, né?",
+                    "Ela estava dolorosamente enganada.",
+                    "Tudo caminhava bem para a Igreja quando Paulinho a buscou em casa. Passaram o caminho inteiro até o mercado, e depois até a casa de Gerluce e Lorena, ouvindo a trilha sonora de High School Musical (que Paulinho se orgulhava em dizer que sabia cantar a letra de todas, provando que não era tão velho assim). Estava tudo bem, tudo muito bem, até Lorena a abraçar, e Eduarda começar a odiar o perfume dela. Como que um cheiro era capaz de fazer seu estômago revirar e sua cabeça girar daquele jeito?",
+                    "Eduarda passou o resto da noite tentando ignorar aquela sensação. Quando Gerluce anunciou o nome do filme (porra, “Amizade Colorida\"? só poderia ser uma piada do universo!), puxou o ar tão forte e rápido que engasgou na pipoca, e desejou que morresse ali mesmo. Seria mais digno morrer engasgada do que de nervoso, certamente.",
+                    "Depois de respirar fundo algumas vezes, até conseguiu conversar e fazer algumas piadas aqui e ali; sendo sincera, não tinha percebido o quanto estava sentindo falta de só estar com Lorena. Mas toda vez que Lorena chegava perto demais, perto o suficiente para Eduarda sentir seu calor e o cheiro de seu cabelo, ficava mais difícil fingir normalidade. Ficava mais difícil fingir que não sentia nada.",
+                    "Eduarda queria esquecer, por uma noite que fosse, do quanto estava sentindo — puta que pariu — necessidade de Lorena, tanto no sentido físico quanto no figurado.",
+                    "Só que quanto mais o momento pedia pelo litúrgico, mais sua mente idealizava o sacrílego.",
+                    "Ela não queria pensar na mão de Lorena na sua, mas então elas se esbarraram no balde de pipoca, e Eduarda teve que fugir para a cozinha com a desculpa de preparar uma nova leva, antes que seu rosto denunciasse o que ela mesma desconfiava de si. Depois de um monólogo dito baixinho para o próprio reflexo azulado no vidro da porta do microondas, Eduarda finalmente conseguiu respirar fundo e tomar coragem de voltar para a sala, mas não sem antes Paulinho gritar avisando que alguém estava tentando falar com ela (obrigada por nada, querido amigo!), ao que Lorena perguntou se ela não iria responder as mensagens que tinha recebido.",
+                    "Ela tinha consciência de que, racionalmente, qualquer tom que estivesse ouvindo ou imaginando na voz de Lorena seria puramente no âmbito da amizade (ou de uma terceira coisa misteriosa), mas isso não impediu Eduarda de sorrir internamente imaginando que Lorena pudesse estar com ciúmes da possibilidade de outra mulher a querer.",
+                    "Bom, a outra mulher em questão era Samantha. Ela e Eduarda vinham trocando algumas mensagens esporádicas; até então, as mensagens eram completamente inocentes, a maioria links de tiktoks sobre yoga depois que descobriram o interesse em comum. Sempre acabavam conversando um pouco mais, então Eduarda já tinha se acostumado com as mensagens diárias, e até estava gostando de conversar com alguém que compartilhava os mesmos interesses, esses que os outros amigos não entendiam ou gostavam.",
+                    "Lorena era muito ciumenta com as amigas, isso ela sempre soube, mas principalmente com Eduarda. Ela quase arrancou o braço da aluna nova do terceiro ano, quando “acidentalmente” fechou a porta da sala nela, após Eduarda se voluntariar para fazer um tour pelo colégio com a garota. Mesmo assim, Eduarda não conseguiu evitar de pensar, pelo menos por um segundo, que Lorena pudesse agora estar com ciúmes dela por outro motivo que não a amizade.",
+                    "Era um sonho um tanto idiota, mas, bem, não tanto quanto o que tinha tido àquela noite.",
+                    "Só de lembrar, Eduarda sente o tesão voltar a aumentar e, junto com ele, uma certa vergonha. Ela termina sua higiene no banheiro, tentando esquecer que aquilo tinha acontecido, e volta à sala.",
+                    "— Bom dia — Lorena saúda com um sorriso, assim que a vê chegar. Ela já estava sentada no colchão, mexendo no celular. — Dormiu bem?",
+                    "Eduarda para no lugar, estática, porque não era possível que Lorena estivesse provocando talvez o pior déjà vu de sua vida. Precisavam ser as exatas mesmas palavras, pelo amor de deus?",
+                    "Por sorte (alguma vez na vida precisava ter alguma, né?), a voz de Lorena acorda Paulinho e Gerluce.",
+                    "— Bom dia — Paulinho fala, a voz rouca de sono. — Que horas são?",
+                    "— Nove e meia — é Lorena quem responde.",
+                    "— Nossa, dormi pesadíssimo. — Gerluce boceja. Ela olha ao redor, como se ainda não estivesse totalmente acordada. — Amor, foi uma ótima ideia, mas agora você sabe que vai ter que voltar os colchões pro lugar, né?",
+                    "Paulinho se joga deitado na cama de forma dramática, e Lorena e Gerluce dão risada. Eduarda não. Eduarda começa a entrar em pânico, porque com o comentário de Gerluce sobre dormir pesado ela começa a pensar: e se Lorena não tivesse dormido tão pesado quanto ela? E se, enquanto sonhava, Eduarda tivesse feito alguma coisa? Ou, pior, e se tivesse gemido? Ela tenta desesperadamente puxar no fundo de sua mente se seus pais alguma vez comentaram sobre ela ser sonâmbula ou algo do tipo. Será que era possível uma pessoa performar atos sexuais dormindo?",
+                    "— Mas pode ser depois do café — Lorena intercede, depois se vira para Gerluce. — Eu acho que não tem pão, né? Eu posso ir ali na padaria rapidinho. — Ela então se vira para Eduarda. — Duda, você pode-",
+                    "— Eu não posso.",
+                    "Eduarda sai do seu torpor, procurando sua bolsa com os olhos, com um senso de urgência invejável à gazelas prestes a serem abocanhadas por um leão.",
+                    "— Calma, tudo bem — Lorena fala, levantando as sobrancelhas. — você não precisa ir comigo na padaria. Eu queria companhia, só isso.",
+                    "— Não, não é isso, é que eu… — Eduarda encontra sua bolsa, pendurada ao lado da porta, e quase corre até ela, a colocando em seu ombro. — Eu preciso ir. — Os amigos apenas a encaram, e ela percebe que precisa dar alguma explicação a mais. — Tá… Tarde. — Não tinha sido a melhor explicação, mas foi suficiente para Gerluce levantar.",
+                    "— Como assim, mulher? Tá cedo demais, até — Gerluce fala, depois a olha de cima a baixo. — E você vai sair assim?",
+                    "— Assim como?",
+                    "— De pijama — é Lorena quem fala, com o cenho franzido.",
+                    "— Ah, não… — Eduarda dá uma risada fina. — Eu vou trocar de roupa! — Os três continuam a encarando, esperando alguma explicação real, claro.",
+                    "— É… Licença.",
+                    "Ela sai, voltando ao quarto de Lorena e fechando a porta.",
+                    "— Burra, burra, burra — Eduarda fala irritada para si mesma, baixinho, enquanto busca suas roupas dobradas em cima da cômoda de Lorena. — É claro que iam perguntar, você fica toda estranha, nem consegue disfarçar!",
+                    "Ela tira primeiro o short, vestindo sua calça sem calcinha mesmo, já que não tinha previsto dormir ali, então não trouxe uma limpa. Depois ela levanta a blusa, mas não consegue retirá-la, porque a alça prende em seu brinco.",
+                    "— Puta que pariu, era tudo que eu precisava agora, sinceramente-",
+                    "— Duda?",
+                    "A voz de Lorena surge do nada, fazendo com que Eduarda se assuste e se desequilibre, e ela cairia no chão se não fosse Lorena a segurando.",
+                    "— Eita, cai não. — Lorena ri.",
+                    "A situação não era das melhores. Com a blusa presa na cabeça, não enxergava nada, os braços levantados tentavam, sem sucesso, soltar a alça do brinco. Estava de costas para a porta, pelo menos, então seus peitos descobertos não estavam encarando Lorena naquele momento, enquanto ela a segurava pela cintura nua. E tudo bem quando sua melhor amiga te segura pela cintura nua, né? Tudo ótimo! Aquilo não a fazia sentir mais coisas, não, pelo amor de deus!",
+                    "— E-eu… — Eduarda tenta falar. — V-você pode… — Ok, mais uma palavra, vamos lá! — Eu prendi…",
+                    "— A blusa ficou presa? — Lorena tenta adivinhar, já que Eduarda aparentemente não sabia mais formar frases. Ela apenas balança a cabeça, confirmando, e Lorena começa a desembolar a alça de seu brinco e seus cabelos, já que a tentativa desesperada de Eduarda apenas piorou a situação. Leva talvez um minuto e uma eternidade de Lorena respirando em sua nuca para que consiga, e Eduarda tira completamente a blusa do corpo. — Prontinho.",
+                    "— Obrigada — ela fala sem jeito, se virando para olhar para Lorena.",
+                    "Agora o problema era que estava com os peitos de fora. Eduarda esqueceu desse pequeno detalhe antes de se virar, feito uma mula. Ela já estava em pânico o suficiente antes de ficar seminua na frente de Lorena sem querer, então é possível imaginar o seu estado quando vê a amiga olhar para baixo, diretamente nos olhos de seus mamilos, e não desviar.",
+                    "— P-por que… — Lorena começa, e deve perceber que estava olhando por tempo demais, porque desvia o olhar para uma das paredes do quarto. — Por que você vai tão cedo? Aconteceu alguma coisa?",
+                    "<em>Aconteceu, Lorena. Eu sonhei que a gente acordava grudada e eu fazia um dry humping em você, enquanto você falava coisas deliciosas no meu ouvido. Eu sonhei com a gente fazendo sexo matinal, e acontece que eu queria que fosse verdade. Puta merda, eu queria mais do que tudo que fosse verdade.</em>",
+                    "— Não — é o que ela responde, finalmente vestindo a blusa. — É que eu… — Eduarda faz uma pausa, tentando inventar uma razão. — Eu tenho que dar comida pro gato dos meus pais. Eles tão viajando, sabe como é…",
+                    "Veja, os pais de Eduarda não tinham um gato. E Lorena sabia disso. E Eduarda sabia que Lorena sabia disso. Veja, o pânico era pior do que ela mesma imaginava.",
+                    "— Desde quando seus pais têm um gato? — Lorena volta a se virar para ela e aperta os olhos.",
+                    "— Desde a semana passada. — Lorena a encara, sem piscar, e Eduarda tem certeza de que ela não está acreditando, mas continua mesmo assim. — Eu acho que eles tavam com saudade de mim.",
+                    "O complemento faz Lorena soltar um riso fraco, e Eduarda sorri.",
+                    "— E qual o nome do gato, hein? — Lorena pergunta, cruzando os braços.",
+                    "<em>Porra, o nome do gato! Burra! É claro que Lorena vai querer saber o nome do gato! Tá, é só pensar em um nome. Qualquer nome. Pode até ser nome de gente! As pessoas colocam nome de gente em gato também, né?</em>",
+                    "— Cláudio.",
+                    "<em>Cláudio?!</em>",
+                    "Eduarda morde a bochecha. Era a pior mentira do mundo, ela sabia. E Lorena sabia. E Eduarda sabia que Lorena sabia. E agora teria que arranjar um gato para os pais, convencê-los a o adotar e nomeá-lo Cláudio.",
+                    "— Sua mãe não tinha alergia? — Lorena pergunta. Memória invejável, sinceramente.",
+                    "— Curou.",
+                    "— Entendi.",
+                    "Lorena continua olhando para Eduarda de braços cruzados, e por um momento parece querer dizer mais alguma coisa, mas se queria, desiste.",
+                    "— Tudo bem, então — é o que Lorena fala, soltando os braços ao lado do corpo e andando até a porta. — Me avisa quando chegar?",
+                    "— Aviso.",
+                    "Elas voltam em silêncio para a sala, Eduarda com a bolsa à tira-colo.",
+                    "— Então — Eduarda fala, se virando para Paulinho e Gerluce, que continuavam no colchão deles. — Eu vou indo. Obrigada pela noite.",
+                    "— Ela tem um gato pra alimentar — Lorena completa, um tanto irônica.",
+                    "Paulinho e Gerluce apenas se olham, parecendo confusos, mas não falam nada. Eduarda fica parada ao lado da porta, pensando se deveria dizer mais alguma coisa, pensando o que seria essa alguma coisa, pensando se deveria dizer a verdade (ou parte da verdade) para Lorena, e algo em seu semblante deve tê-la denunciado, porque de repente Paulinho se levanta.",
+                    "— Eu te levo lá embaixo — ele fala, já calçando as havaianas e andando até ela, que solta o ar que nem sabia estar prendendo.",
+                    "— Aproveita e compra pão pra gente — Gerluce pede, e ele sorri amarelo, concordando com a cabeça.",
+                    "Lorena abre a porta para os dois, e Paulinho aperta o botão do elevador.",
+                    "— Não esquece de avisar — Lorena fala, segurando a maçaneta, e Eduarda acena com a cabeça. — E manda uma foto do Cláudio. — Ela pisca um olho para Eduarda, rindo, e fecha a porta.",
+                    "— Cláudio? — ele pergunta, e Eduarda levanta a mão, fazendo um sinal para que ele esperasse.",
+                    "A porta do elevador se abre e eles entram, apertando o térreo. Lado a lado, em silêncio absoluto, os amigos encaram o visor que indicava o décimo quinto andar. Eduarda sente que pode explodir a qualquer momento, um pensamento mais desorganizado que o outro. Paulinho com certeza se ofereceu para descer com ela por Eduarda ter agido estranho, mas ela não fazia ideia de por onde começar a se explicar.",
+                    "Décimo terceiro, décimo segundo-",
+                    "— EuachoquetôgostandodaLorena — Eduarda solta em um surto de coragem (ou mania), tudo de uma vez, as palavras atropelando uma à outra.",
+                    "Paulinho vira rápido para ela, o rosto uma interrogação.",
+                    "— O quê?!",
+                    "— EuachoquetôgostandodaLorena — Eduarda repete, da mesma forma atropelada.",
+                    "— Eduarda, fala devagar, porra! — Paulinho reclama.",
+                    "— E-eu acho… — Eduarda começa, tentando acalmar o coração dentro do peito. — Ah, foda-se. — Ela se vira para Paulinho e respira fundo. — Eu acho que tô gostando da Lorena.",
+                    "Paulinho continua com a mesma expressão, e Eduarda arregala os olhos para ele, como se cobrasse uma resposta.",
+                    "— Você me ouviu? — ela pergunta, quando o elevador já está no segundo andar e ele ainda não tinha falado nada.",
+                    "— Ouvi.",
+                    "— E…?!",
+                    "— E o quê?",
+                    "— Paulo, eu acabei de te contar uma coisa enorme. — Eduarda começa a ficar irritada. — Gigante! Sem precedentes! Absurda, inclusive! — ela exclama, e o elevador chega no térreo.",
+                    "— Eduarda, absurdo é você dizer que acha! — Paulinho passa na frente dela, depois para, respirando fundo e diminuindo o tom de voz. — Olha, que você gosta dela tá muito claro.",
+                    "Aquilo apavora Eduarda. O quão claro? O suficiente para outras pessoas perceberem? O suficiente para Lorena perceber? Não é possível que só ela não estava percebendo.",
+                    "— A pergunta é o que você vai fazer em relação a isso — ele continua. — Não dá pra você ficar saindo correndo toda vez que a gente fizer algum rolê.",
+                    "— Eu não saí correndo! — Eduarda se defende, pelo menos no ponto que consegue.",
+                    "— Tá, não saiu literalmente correndo, mas inventou alguma desculpa idiota, não foi?",
+                    "— Eu talvez tenha falado pra Lorena que tinha que dar comida pro gato dos meus pais.",
+                    "— Eduarda, seus pais não tem gato.",
+                    "— Eu sei! — Ela já se sente desesperada. — Eu sei, tá? Eu não sabia o que falar!",
+                    "— Porque você é péssima mentindo, eu sei.",
+                    "É, as evidências apontam mesmo para isso, e Eduarda sente o sangue desaparecer de seu rosto.",
+                    "— Puta merda, Paulinho, você acha que a Lorena percebeu alguma coisa?",
+                    "— Olha, sendo sincero, acho que não — ele fala, e Eduarda solta o ar. — Mas porque é outra tapada.",
+                    "— Como assim? — Eduarda aperta os olhos, sem entender.",
+                    "— Vocês são duas tapadas — Paulinho fala, se sentando na poltrona do hall. —, porque não percebem o que tá na cara de vocês.",
+                    "— Paulo, eu não tô com paciência pra charada.",
+                    "— Porra, eu vou ter que desenhar? — Paulinho levanta as mãos, e Eduarda continua o encarando, genuinamente sem saber do que ele falava. — Vocês são feitas uma pra outra, Duda. Eu brinco desde o ensino médio, mas, de verdade, vocês não percebem como combinam — ele continua, respirando fundo. — Eu te falei que não era uma ideia tão boa assim, não falei? Eu falei que alguém ia se apaixonar.",
+                    "Era verdade. Eduarda lembra que, logo depois que descobriu que ela e Lorena tinham transado, Paulinho havia dito que daria merda.",
+                    "— Eu não falei nada sobre estar apaixonada, calma lá! — Eduarda fala, passando as mãos pelos cabelos, rebatendo, mais uma vez, a única coisa que consegue.",
+                    "— Tá. Gostando, que seja. Mas você não respondeu. — Ele faz uma pausa, e olha no fundo dos olhos de Eduarda. — O que você vai fazer agora?",
+                    "— Nada, né? — Eduarda fala, e Paulinho se joga, dramático, para trás. — Ah, Paulinho, eu não sei o que eu posso fazer.",
+                    "Ela começa a andar de um lado para o outro e, pela primeira vez desde que acordou, começa também a pensar. Tinha mais razões para não falar ou fazer nada do que o contrário.",
+                    "— Eu não tenho absolutamente nenhum sinal de que Lorena sinta alguma coisa. Que eu também não tenho certeza que sinto, pra começo de conversa, por mais que você fale essas maluquices aí. — Ela faz uma pausa. — Na verdade, eu não faço ideia do que eu quero! Como que eu vou arriscar essa amizade se eu não sei o que eu quero? E também tem as regras, a gente prometeu… — Paulinho levanta uma sobrancelha para ela, e Eduarda revira os olhos. — Tá, eu sei que eu já quebrei uma das regras. Talvez mais de uma.",
+                    "Eduarda se lembra de como tecnicamente beberam no outro dia, na casa de Lorena, mas foi, tipo, um golinho. Estavam muito longe de estar bebendo.",
+                    "— Não importa! — Ela já não tem muito mais para onde andar, então resolve se sentar na poltrona ao lado de Paulinho. — A gente tem as regras por um motivo.",
+                    "— Um motivo idiota — Paulinho pontua, rindo pelo nariz.",
+                    "— Não é idiota! Imagina que eu vou e falo pra Lorena que eu talvez esteja gostando dela. E se ficar tudo estranho? E se ela, sei lá, corresponder… — Só de pensar, Eduarda já sente o estômago dar um salto carpado na barriga. — E se não for isso que eu tô sentindo? E se for, e ela corresponder, e der errado? E se a gente nunca mais se falar depois disso?",
+                    "— Duda, calma — Paulinho fala, buscando sua mão. — Você tá muito no futuro, cara! “E se”, “e se”... E se der tudo certo?",
+                    "— Eu não consigo pensar assim, Paulinho. — Ela se joga na poltrona, se sentindo derrotada e perdida. — Eu não quero sentir isso! Você tinha razão. — Eduarda pega o celular para chamar um uber, decidindo que não queria mais estar ali, e um motorista aceita imediatamente. — Enfim, eu tenho que ir, meu uber tá dando um minuto.",
+                    "— Pensa no que eu falei, pelo menos — Paulinho fala, a abraçando. — Você não precisa fazer nada agora, mas… Em algum momento você vai ter que lidar com isso.",
+                    "— Eu sei — Eduarda fala, se afastando do abraço, e checando o celular mais uma vez. — Chegou. Obrigada, amigo.",
+                    "— Tô sempre aqui, você sabe.",
+                    "Eduarda sorri fraco para ele e sai andando, sentindo o peso do corpo maior a cada passo. Ela confere a placa e entra no uber, o cumprimentando e logo implementa seu silêncio por direito da categoria black. Sacando seu celular, Eduarda se esforça para se distrair na viagem desnecessariamente longa àquela hora do dia; abre o tiktok, fecha, abre o instagram, fecha, abre o aplicativo do banco — por quê? —, fecha. Quando desiste e bloqueia o celular, como se por destino, a tela volta a acender. Era uma ligação de sua mãe, e Eduarda cogita recusar, mas já tinha ignorado algumas chamadas nos últimos tempos, porque, bem, esteve um tanto ocupada.",
+                    "— Esqueceu que tem mãe, Eduarda?! — é a primeira coisa que Violeta fala quando ela atende, antes mesmo dela poder dizer “alô”. Seu tom não é tão sério, mas Eduarda sabia que tinha um fundo de verdade.",
+                    "— Oi, mãe. Desculpa, é que nas últimas semanas-",
+                    "— Você está de férias, Eduarda!",
+                    "— Eu sei, mãe… — Eduarda suspira. — Para de me chamar de Eduarda, parece que tá brigando-",
+                    "— Mas estou mesmo! Como pode? Eu e seu pai estamos há quase um mês viajando, e você nem atende minhas ligações! E se tivesse acontecido alguma coisa, já pensou?!",
+                    "— Mas se você tava me ligando, é porque não tinha acontecido nada-",
+                    "— Ah! Então você viu as ligações e não me atendeu de propósito?",
+                    "— Não, mãe, é que… — Eduarda respira fundo. — Tá bom, desculpa. Eu devia ter ligado de volta.",
+                    "— Devia mesmo — Violeta responde, soltando um suspiro cansado. — Mas enfim… Estou te ligando para avisar que eu e seu pai voltamos na semana que vem, e vamos almoçar juntos na sexta, lá em casa. Nós quatro.",
+                    "— Você tá me avisando que vamos almoçar? — Eduarda solta uma risada. — E se eu tivesse ocupada, hein?",
+                    "— Você desmarcaria para almoçar com seus pais que você diz amar mas não quer nem saber se estão vivos.",
+                    "— Mãe, para de drama, pelo amor de deus. Eu já pedi desculpa! — Eduarda passa uma mão pelos cabelos, se sentindo culpada. — Ei, pera aí. Como assim nós quatro?",
+                    "— Eu, seu pai, você — Violeta fala. — e a Lorena, é claro.",
+                    "— A Lorena?! — Eduarda quase grita, assustando o motorista. Ela pede desculpas baixinho para ele, e diminui seu tom de voz. — Mãe, é que eu não sei se… — A última coisa que Eduarda queria era ter que fingir que estava tudo bem com Lorena, ainda mais na frente dos pais. — Eu não acho que a Lorena vai poder, eu acho que-",
+                    "— Ela pode sim, acabou de me responder.",
+                    "— Você falou com ela antes de falar comigo?!",
+                    "— Sim, claro! Diferente de você, ela responde todos os meus stories, sempre uma fofa, essa menina… — Violeta fala, animada.",
+                    "Eduarda revira os olhos. Lorena tinha um jeito de encantar até os mais velhos que ela invejava. Os pais eram tão apaixonados pela amiga que, na adolescência, mesmo quando não queriam deixar Eduarda sair, era só Lorena pedir que na mesma hora mudavam de ideia.",
+                    "— Ela perguntou quando nós voltamos, então chamei ela logo — Violeta continua. — Ah, filha, vou te mandar o itinerário do voo, para você nos buscar na quinta à noite. Você dorme lá mesmo, a Vera já está avisada, vai deixar tudo limpinho pra você.",
+                    "— Tudo bem. — Eduarda queria mais uma vez perguntar porque a mãe estava avisando o que ela iria fazer, mas acha que já tinha falhado o suficiente com os pais para ter algum direito de recusar. O uber estaciona na porta de seu prédio, ela agradece e sai do carro. — Me manda tudo certinho. Mãe, agora tô chegando em casa, depois a gente se fala, tá bom? Manda um beijo pro papai.",
+                    "— Tá certo, filha… Henrique, sua filha tá mandando um beijo!... O quê?! Ah, sim… Ele mandou outro, filha. Beijo, te amo!",
+                    "— Também te amo, mãe. — Eduarda sorri, entrando no prédio. — Beijo!",
+                    "Ela desliga a ligação e respira fundo. Tá. Ela poderia aguentar um almoço de família. Ela, os pais e Lorena. Lorena e ela. E os pais. Falariam sobre a viagem deles, aquilo ocuparia o tempo inteiro do almoço, e ela poderia sair logo depois. Ou ter uma disenteria violenta. Existiam opções, pelo menos.",
+                    "<div class=\"brat-chapter-divider\"><p><span>◇</span></p></div>",
+                    "Quanto mais se aproximava da hora marcada do almoço, mais a mentira de uma diarreia começava a se tornar verdade.",
+                    "A semana consistiu basicamente em Eduarda assistindo filmes debaixo das cobertas, com a desculpa de que estava chovendo demais para sair em São Paulo — e, realmente, esteve chovendo bastante. Lorena até perguntou se queria fazer alguma coisa, em mais de uma ocasião, mas Eduarda deu desculpas convincentes o suficiente para se esquivar das saídas (por mensagem era mais fácil mentir, pelo menos). A verdade é que estava temendo encontrar Lorena de novo antes de entender o que estava sentindo. Seu maior medo era não conseguir se segurar, agir estranho ou soltar algo que não tinha certeza, assim quebrando ou mutando a amizade, talvez de forma irreparável.",
+                    "Esgotou o catálogo de filmes mais famosos de romance dos streamings, focando naqueles em que o casal era amigo antes. Queria ver se alguma obra a tocava em seu interior, se parecia com aquele sentimento dela. Até tentou ler algumas fanfics de um casal lésbico de novela que tanto ouvia falar no twitter, já que a maioria dos filmes exibia casais héteros, mas nada parecia trazer alguma conclusão. Primeiro que Eduarda sabia que eram apenas obras de ficção. Era o gênero, romance, então é óbvio que tudo daria certo. Além disso, nenhum filme ou fanfic parecia encaixar na sua situação tão específica.",
+                    "Foi obrigada a levantar da cama e arrumar uma mochila para buscar os pais — em Guarulhos, inclusive! — na quinta-feira. Ouviu a mãe reclamar de sua ausência por todos os quarenta e cinco minutos da viagem até a casa dos pais em Higienópolis, falhando todas as vezes que tentava mudar de assunto, perguntando da viagem. Violeta insistiu que deveriam esperar o almoço do dia seguinte, que poderia esquecer de contar algum detalhe para Lorena depois, ao que Eduarda revirou os olhos. Henrique, por sua vez, chorou algumas vezes desde que viu Eduarda os esperando no desembarque. No final, Eduarda conseguiu amaciar a mãe, pedindo um delivery do japonês favorito dela para o jantar.",
+                    "Violeta poderia estar mais tranquila, mas Eduarda mal conseguiu dormir à noite, pensando no almoço com Lorena. Estava rezando para que os pais a monopolizassem, e Eduarda pudesse apenas desaparecer no plano de fundo, mas até pensar em qualquer pequena interação, como passar o sal para Lorena, já a deixava nervosa.",
+                    "Já é meio dia e meia quando Eduarda está terminando de se arrumar. Ela trocou de roupa em torno de um milhão de vezes, sem conseguir decidir se estava muito ou pouco arrumada. O que era muito arrumada para um almoço com seus pais e sua melhor amiga que talvez tenha sentimentos por? Estava em casa, então alguém poderia argumentar que até uma havaianas seria dentro do tom — bom, essa pessoa não era Violeta Fragoso, então ela optou por uma sandália um tanto mais arrumada.",
+                    "Escolheu, por fim, um vestido claro, passando um pouco do meio das coxas, com um decote talvez quase revelador demais, em que o tecido caía solto por seu peito. Se a perguntassem, diria que com certeza não tinha escolhido aquela roupa por ela destacar tão bem seus seios, e com mais certeza ainda que não tinha nada a ver com a expressão de Lorena quase babando ao ver seus peitos no outro dia. Por que se vestiria para isso? Por que importava?",
+                    "Eduarda desce as escadas, tentando manter o ritmo de sua respiração estável. Meio dia e cinquenta e cinco. Lorena tinha combinado de chegar às uma da tarde, Eduarda tinha confirmado três vezes com a mãe. Normalmente a amiga se atrasava com estilo, mas, com Violeta, era sempre muito pontual, claro. Brigava com a própria mãe por causa do horário de saída toda vez, mas com a mãe de Eduarda se portava perfeitamente, como se fosse… Como uma…",
+                    "Ela nem consegue completar o pensamento, de tão nervosa que fica.",
+                    "— Oi, meu amor. — Violeta surge do mais absoluto nada, fazendo Eduarda se sobressaltar. — Tá linda! Dá uma voltinha, vai — ela pede, pegando a mão de Eduarda e girando acima de sua cabeça, forçando a filha a girar nos pés. — Mas, vem cá… — Violeta aperta os olhos, olhando-a de cima a baixo. — Não tá muito arrumada não?",
+                    "— Você acha? — Eduarda olha para baixo, começando a duvidar da própria escolha. — Ai, mãe, não sei, parece que não tenho mais roupa boa — ela lamenta, fazendo um biquinho. — Eu trouxe algumas opções, mas tudo pareceu errado.",
+                    "— A gente vai no shopping algum dia desses, minha filha — Violeta fala, sorrindo. — Você tá linda, meu amor, eu falei! Só não entendi esse requinte todo com um simples almoço em família.",
+                    "A última parte da fala de Violeta a assusta, assim como tudo que envolvia aquele almoço. Em família. Como se fossem, mesmo. Como se Eduarda estivesse levando a… Namorada… Para conhecer os pais. Sinceramente, era o que parecia, apesar de Lorena já ser muito conhecida por eles. A sensação era de que, ao invés da garota estar sob o escrutínio de seus pais, Eduarda era quem estava ali a ser julgada. Eram as suas ações e reações que ganhariam nota, que poderiam significar o começo, o meio ou o fim.",
+                    "Eduarda pensa se deve responder alguma coisa, mas antes que possa, a campainha toca, e ela solta um risinho nervoso.",
+                    "— Você pode atender a porta, meu amor? — Violeta pede. — Eu vou chamar seu pai e falar com a Vera rapidinho.",
+                    "Eduarda não responde, apesar de ter vontade de proferir alguns xingamentos à mãe, que apenas sai em direção às escadas. Ela respira fundo e escuta mais um toque da campainha, o que a faz quase correr até a porta e abrir.",
+                    "Ainda bem que Eduarda já tinha respirado fundo, porque a visão que ela encontra do outro lado arranca o fôlego de seus pulmões. Lorena vestia uma blusa preta soltinha, uma saia longa, coturnos, e o sorriso mais inebriante da face da terra. Sem palavras, Eduarda continua estática, a mão na maçaneta e o queixo no chão.",
+                    "— Duda? — Lorena chama, e Eduarda precisa piscar algumas vezes para perceber que Duda era seu nome.",
+                    "— Ah, oi! Entra, entra! — Eduarda a abraça rapidamente e depois abre espaço para Lorena passar, e quando ela o faz, Eduarda fecha os olhos com força, antes de relaxar o rosto e fechar a porta. — Minha mãe foi chamar meu pai.",
+                    "Lorena passa alguns segundos olhando ao redor, o que Eduarda acha curioso.",
+                    "— Tudo bem — Lorena fala, então se vira de volta para Eduarda. — E você? Como tá?",
+                    "— Eu?",
+                    "— É, Duda, a gente se falou pouco esses dias, tô com saudade.",
+                    "Lorena parece sincera, e Eduarda se sente um pouco culpada. Ela não queria alienar Lorena por completo, não era sua intenção, mas estava surtando demais para agir de qualquer outra forma.",
+                    "— É verdade, desculpa — ela fala. — Tava um pouco cansada, quis ficar um pouco mais quietinha, ainda mais com aquela chuva toda essa semana…",
+                    "— Tudo bem — Lorena fala, se sentando no grande sofá da sala, indicando com a cabeça para que Eduarda sente ao seu lado, e ela acata. Elas ficam um momento em silêncio, mas então Lorena se vira para ela com um meio sorriso. — Não deve ter dado tempo de achar um gato, né?",
+                    "O gato. Puta merda, tinha esquecido do gato. Lorena apenas ri, e Eduarda dá um sorriso amarelo, pensando no que falar, mas então seus pais surgem nas escadas.",
+                    "— Lorena, meu amor! — Violeta fala, abrindo os braços, infinitamente mais animada do que quando viu Eduarda no desembarque. Ok, ela entendia. Também se sentia assim vendo a amiga. — Quanto tempo!",
+                    "Lorena se levanta e quase corre até os braços de Violeta, e seu pai surge por trás, se juntando ao abraço, enquanto Eduarda assiste de fora.",
+                    "— A gente tava morrendo de saudade, minha filha — Henrique fala, a voz já embargada. Sim, o pai de Eduarda chamava Lorena de filha. Tsc.",
+                    "Eduarda se sente confusa com a quantidade de estímulos diferentes em um curto período de tempo. Primeiro, ficou sem palavras ao ver Lorena, depois nervosa e envergonhada por obviamente ser descoberta pela amiga, e então com ciúme e feliz ao mesmo tempo. Veja, o normal seria apenas sentir ciúmes dos pais, por parecerem amar mais Lorena do que a própria filha, mas Eduarda também sente uma pontada de felicidade, como se, ali, o momento fosse precioso demais para ser manchado por um ciúme besta. Ela não consegue evitar de imaginar aquela sendo sua vida, levar a namorada para um almoço em casa em um dia qualquer. Podia ser o poder da sugestão, mas digamos que Eduarda estivesse bem sugestionada.",
+                    "Enquanto Eduarda sonha acordada, Lorena já está sendo escoltada por seus pais até a mesa, e ela percebe que ficou para trás, então apenas os segue. Henrique e Violeta sentam cada um em uma ponta da mesa, e Eduarda e Lorena sentam uma de frente para a outra, formando um retângulo. Vera aparece com as entradas, e Eduarda se entretém com o pão, querendo focar em qualquer outra coisa que não a mulher estonteante em sua frente.",
+                    "— Ai, Lorena, você precisa ir no Coliseu algum dia — Violeta continua a falar sobre a viagem, e só agora Eduarda percebe o tópico. — Eu achei a sua cara! Muita história por ali, acho que você vai adorar!",
+                    "— Com certeza, Vi! — Lorena parece animada. — Eu mostrei pra minha mãe seus stories, já falei que na próxima ida à Europa precisamos ir em todos os lugares que vocês foram. — Ela ri. — Normalmente meu pai prefere o interior da França e Itália, sabe como é…",
+                    "— Os melhores vinhos do mundo! — Henrique completa. — Meu amigo sabe das coisas.",
+                    "— Ah, Lore! Isso me lembra uma coisa, espera um pouco. — Violeta se levanta, indo até o aparador da sala de estar e voltando com um embrulho. — Trouxemos uma lembrancinha pra você.",
+                    "Violeta entrega o presente e volta a se sentar, e Lorena sorri tão lindo, tão grande, que as covinhas quase matam Eduarda. Se controla.",
+                    "— Ai, tia Vi, não acredito! Não precisava…",
+                    "— Claro que precisava! — é Henrique quem fala.",
+                    "Lorena abre a embalagem com cuidado, e tira dela um suéter de lã fina, com os dizeres “Dolce far niente”, ou “A doçura de não fazer nada”, em italiano, e um desenho delicado da silhueta de Roma. Ela olha do presente para os dois, ainda sorrindo.",
+                    "— Ai, eu amei! Eu adoro essa cor, e que delícia esse tecido!",
+                    "— A gente comprou uma igual para a Eduarda, também — Violeta fala. — E pra nós dois, de outra cor. Dá até pra tirarmos uma foto em família no natal, o que acham? — Seu olhar passa de Lorena para Eduarda, e ela acha no mínimo engraçado que agora é o momento que ela lembra da existência da filha.",
+                    "— E eu não ganho o presente, só a Lorena? — Eduarda revira os olhos e Lorena ri.",
+                    "— Ai, filha! O seu está lá em cima, que drama! — Violeta exclama.",
+                    "— Eu acho uma ótima ideia, minha paixão — Henrique fala, depois se vira para Lorena. — Sabe, Lorena, sempre te vimos como uma filha…",
+                    "Lá. Vem.",
+                    "— Mas o nosso sonho — ele continua. —, sempre foi que vocês namorassem…",
+                    "— PAI! — Eduarda quase grita, sentindo seu rosto esquentar.",
+                    "— O que foi? — Ele dá de ombros. — É a verdade, minha filha.",
+                    "Eduarda não consegue olhar para Lorena diretamente, mas escuta uma risada fraca dela.",
+                    "— Obrigada tio, eu fico feliz — Lorena fala, depois de alguns segundos. — Mas acho que essa eu vou ficar devendo…",
+                    "O coração de Eduarda ou para de bater, ou bate tão rápido que é impossível dizer se está realmente batendo, porque Lorena disse que acha.",
+                    "— Duas meninas lindas como vocês, legais, ótimos partidos… — Violeta fala, olhando de Eduarda para Lorena. — Desculpe, meu amor, é que nós seríamos tão felizes tendo você como nora…",
+                    "— Pronto, gente, chega — Eduarda é firme. — Chega desse assunto, vocês tão viajando.",
+                    "Dessa vez, Eduarda rouba um olhar de Lorena, mas não consegue identificar sua expressão.",
+                    "— Tudo bem, tudo bem! — Violeta concede. — Mas vem cá, Lorena. — Ela se inclina na mesa, se aproximando da garota. — Já que não é a Eduarda, você tá com alguma mocinha? Namorando, ou… Como é que vocês falam? Ficando?",
+                    "Eduarda se vira para Lorena em expectativa, mesmo sabendo (ou achando) que já saberia se ela estivesse com outra. Ao menos, era o que ela esperava.",
+                    "— Não, tia Vi, não tem outra — Lorena fala para Violeta, apesar de estar olhando para Eduarda.",
+                    "— Não vai me perguntar se eu tô namorando, mãe? — Eduarda questiona.",
+                    "— Ah, Eduarda, você claro que não tá! — Violeta responde, e Eduarda coloca uma mão no peito, ofendida. — Se bem que você tá muito arrumada hoje… Vai sair com alguma paquera hoje e não nos contou?",
+                    "Eduarda olha para Lorena, levemente em pânico, mas a garota apenas a encara no fundo de seus olhos, o rosto impassível e assustador que Lorena sabia bem performar.",
+                    "— Não, mãe — Eduarda fala, os olhos ainda grudados nos verdes. — Sou toda de vocês hoje.",
+                    "— Ótimo! Vamos comer? Querem um vinho? — Violeta pergunta. — Vera! — ela chama, um pouco mais alto. — Pode trazer a comida, por favor!",
+                    "— Vou pegar o vinho que trouxemos, amor — Henrique fala. — Deixamos descansando. Lorena, você prefere tinto ou branco?",
+                    "— Tinto, por favor — Lorena responde.",
+                    "— Perfeita como sempre, Lore! — Violeta elogia. — Vai combinar com o Wagyu que a Vera aprendeu a fazer esses tempos. Sério, essa mulher é perfeita!",
+                    "— Não que alguém tenha me perguntado, mas eu também prefiro tinto — Eduarda pontua, o tom sarcástico.",
+                    "Henrique busca a garrafa de Cabernet Sauvignon e serve as taças uma por uma, ao mesmo tempo que Vera aparece com a comida. Cada um serve seu prato, e os pais começam a discutir sobre a viagem, ora ou outra falando alguma coisa para Lorena, que escuta pacientemente. Só que Eduarda percebe que Lorena fica olhando para ela (e não nos seus olhos) de tempos em tempos, a taça de vinho em sua mão esvaziando mais rápido do que seu prato, e as covinhas aparecendo. Era um olhar sugestivo, para dizer o mínimo.",
+                    "Eduarda toma um gole da própria taça, e então sente seu celular vibrar no colo, e o desbloqueia por debaixo da mesa.",
+                    "<div class=\"chat-block\"><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">seu peito ta me distraindo.</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">para de olhar então, ué</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">você usou essa roupa de propósito, não é possível.</span></div><div class=\"chat-cinza\"><span class=\"balao\">eles tão me encarando.</span></div></div>",
+                    "Eduarda levanta os olhos da tela, olhando para Lorena desacreditada, que apenas dá de ombros de forma sutil. Ela bloqueia o celular, decidindo não responder, e corta mais um pedaço de carne, até que sente outra vibração.",
+                    "<div class=\"chat-block\"><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">você tá uma delícia</span></div><div class=\"chat-cinza\"><span class=\"balao\">puta que pariu</span></div></div>",
+                    "Eduarda bloqueia o celular, de novo. Não queria cair naquilo. Não podia cair naquilo. Tinha que ser forte. Tinha que ignorar o calor em seu rosto, em seu peito, em sua intimidade.",
+                    "Outra mensagem.",
+                    "<div class=\"chat-block\"><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">agora que vc ficou com vergonha</span></div><div class=\"chat-cinza\"><span class=\"balao\">eu to com mais vontade ainda</span></div><div class=\"chat-cinza\"><span class=\"balao\">pqp</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">lorena, pelo amor de deus</span></div><div class=\"chat-azul\"><span class=\"balao\">meus pais tão na mesa!!!</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">eles tão distraidos</span></div><div class=\"chat-cinza\"><span class=\"balao\">eu to com vontade desde aquele dia</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">que dia?</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">que eu acordei com você roçando na minha perna… uma delícia, tá</span></div></div>",
+                    "Eduarda levanta os olhos, horrorizada. Lorena tinha sentido. Ela sabia. O que ela faz agora? O que, meu deus, seria uma boa resposta?",
+                    "— O que acha, Lorena? — a voz de Violeta interrompe aquela bolha de vergonha e tesão entre as duas.",
+                    "— Eu acho ótimo, Vi — Lorena responde, apesar de Eduarda ter a impressão de que ela também não sabia ao que a mãe se referia. Mas, como uma expert em pais dos outros, ela muda de assunto. — A Eduarda já falou pra vocês do Cláudio?",
+                    "Caralho, que mulher endemoniada!",
+                    "— Cláudio? — Henrique pergunta, apertando os olhos. — Não sei não, quem é Cláudio?",
+                    "Lorena abre um sorriso, olhando para Eduarda com a cara de quem sabe exatamente o que está fazendo.",
+                    "— Ah, Cláudio! O gato-",
+                    "— O professor que eu vou pegar… Quer dizer, vou ter aula! — Eduarda solta, nervosa. — No semestre que vem.",
+                    "— Gato? — Violeta inclina a cabeça, levantando uma sobrancelha. — Você, Eduarda, achando um professor gato? — Ela diminui o tom de voz. — Minha filha, eu achei que você fosse gay.",
+                    "— Eu sou, mãe! Lésbica — ela corrige. — Foi a Gerluce que achou ele gato. Enfim! — Eduarda vira para Henrique, querendo muito mudar de assunto. — Muito bom esse vinho, pai. Vocês trouxeram da França?",
+                    "Aquilo funciona em distrair os pais, e Henrique começa a falar animado sobre a região de Bordeaux e todas as vinícolas que visitaram. Como um badalar de relógio, seu celular vibra de novo.",
+                    "<div class=\"chat-block\"><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">você não sabe mentir mesmo, né?</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">para com isso, lorena</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">mas é muito divertido!</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">eu não to rindo</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">nem eu</span></div><div class=\"chat-cinza\"><span class=\"balao\">ta bom, talvez um pouco</span></div><div class=\"chat-cinza\"><span class=\"balao\">mas eu to mais te imaginando por debaixo desse vestido…</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">LORENA</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">você tá com frio?</span></div><div class=\"chat-azul\"><span class=\"nome-contato\">Eduarda</span><span class=\"balao\">vai se fuder</span></div><div class=\"chat-cinza\"><span class=\"nome-contato\">Lô</span><span class=\"balao\">isso é o que eu quero fazer com você</span></div><div class=\"chat-cinza\"><span class=\"balao\">você ta tão gostosa, porra</span></div><div class=\"chat-cinza\"><span class=\"balao\">sacanagem do caralho</span></div><div class=\"chat-cinza\"><span class=\"balao\">eu preciso te comer</span></div><div class=\"chat-cinza\"><span class=\"balao\">sabe o que eu quero?</span></div></div>",
+                    "Eduarda bloqueia o celular, o largando no colo e bebendo outro gole de vinho, porque ela não aguentaria muito mais de Lorena a atiçando daquele jeito. Eduarda se abana e lança um olhar de reprovação para Lorena, que deve perceber que ela não olharia mais as mensagens, porque Eduarda sente a perna dela roçar na sua, bem no momento em que repousava a taça sobre a mesa. Ela se sobressalta tanto que derruba a taça, e o vinho restante respinga na roupa de Lorena.",
+                    "— Eduarda! — Violeta exclama, se levantando rápido. — Olha os modos, menina avoada! Lorena, minha filha, melhor tirar essa roupa pra tentar tirar a mancha logo, tem um produtinho no banheiro da Duda.",
+                    "— Tá certo, tia — Lorena fala, se levantando, mas lança um olhar para Eduarda. — Licença.",
+                    "— Minha filha, vai ajudar ela! — Violeta fala para Eduarda, que arregala os olhos de leve. — É o mínimo que você pode fazer, né? Depois dá a roupa pra a Vera colocar de molho.",
+                    "— É, Duda. — Lorena sorri. — Vem comigo. — E pisca um olho discretamente, claro.",
+                    "Eduarda levanta, porque o que mais faria? Ela segue Lorena até o próprio quarto, temendo cada passo de sua vida, se vira e fecha a porta, respirando fundo.",
+                    "<em>Você consegue fazer isso. É só escolher uma nova roupa pra Lorena, pegar a manchada, e sair do quarto. Você é forte! Uma guerreira! Você não é regida por sua buceta, Eduarda! Vamo lá!</em>",
+                    "Acontece que, quando Eduarda se vira para falar com Lorena, a garota já está apenas de calcinha, um sorriso ordinário no rosto. O piripaque se aproximava, e rápido. Eduarda não era forte porra nenhuma.",
+                    "— E-eu vou levar… — ela ainda tenta, porque quer provar para si mesma que consegue. — Eu vou p-pegar seu… — Lorena dá um passo em sua direção, depois outro, depois outro, até alcançar sua mão, e começar a guiá-la para o banheiro. — Vou levar… Lorena… A sua roupa… — Lorena não responde, apenas continua andando e levando Eduarda junto.",
+                    "Estava fraca, era fraca, fraquíssima.",
+                    "Elas entram no banheiro e Lorena fecha a porta. Eduarda, a esse ponto, estava ali só em corpo. Sua alma já tinha deixado aquele plano antes mesmo de chegar ao banheiro. Lorena a empurra contra a bancada da pia, e brinca com o tecido solto de seu decote.",
+                    "— O que você sonhou? — ela fala, a voz baixa, quase um sussurro.",
+                    "— S-sonhei…? — Eduarda consegue falar.",
+                    "— Quando você tava roçando na minha perna… — Lorena passa uma mão pela lateral de seu corpo, e Eduarda se arrepia da cabeça aos pés. — Você tava sonhando, não tava?",
+                    "— E-eu…",
+                    "— Eu sei que tava — Lorena fala, com um sorriso, continuando o caminho das mãos até suas coxas. — Eu também já sonhei com você, sabia?",
+                    "— Sério?",
+                    "Lorena balança a cabeça devagar, confirmando, e começa a puxar o tecido do vestido de Eduarda com as pontas dos dedos, arrastando as unhas de leve pela pele de sua coxa, tecido da calcinha, cintura…",
+                    "— Eu tive que resolver com um travesseiro, Duda — Lorena continua subindo seu vestido devagar, até que para de repente. — Fiquei pensando em você o tempo todo enquanto eu me esfregava…",
+                    "Uma mão de Lorena escorrega da cintura para a barra da calcinha e adentra devagar, fazendo Eduarda suspirar quando sente os dedos quentes deslizarem por sua buceta já encharcada. Lorena se movimenta devagar por ali, sem tirar os olhos dos dela.",
+                    "— Porra, Eduarda… Olha como você já tá molhada… Você tá uma delícia, puta que pariu — Lorena continua, a voz cada vez mais perigosa. — Isso foi só pelas mensagens? Só precisei disso, é?",
+                    "Eduarda não responde, porque, porra. Lorena tira a mão, e Eduarda quase mia em resposta. Ela leva a mão molhada para a própria boca, chupando os dedos devagar, enquanto Eduarda assiste, hipnotizada.",
+                    "— Vem cá — Lorena pede, e Eduarda, é claro, obedece. Ela inverte suas posições, se encostando na pia dessa vez, e bate uma vez na própria coxa, de leve. — Tira a calcinha.",
+                    "Eduarda, é claro, obedece. Lorena a puxa pela cintura, levantando novamente seu vestido, e se aproxima de seu ouvido.",
+                    "— Eu quero que você se esfregue em mim de novo, daquele jeito que você fez, bem gostoso… — Lorena fala, e Eduarda acha que, só de ouvir aquilo, ela já poderia gozar. — Eu quero te sentir, Eduarda.",
+                    "Lorena guia Eduarda, até que ela sente como está molhando a pele fria da coxa de Lorena, que solta um gemido fraco, ainda em seu ouvido. Aquilo é tudo que Eduarda precisa de incentivo para começar a se movimentar, auxiliada pelas mãos de Lorena em sua cintura. Eduarda agarra o pescoço de Lorena e a puxa para um beijo desesperado. As línguas se encontram, famintas, e sentir o gosto de Lorena de novo é inebriante. Lorena instiga Eduarda a acelerar um pouco, a fazendo gemer contra a boca dela, um som gutural, aflito, de quem já desejava aquilo por tempo demais.",
+                    "— Caralho, Lorena…",
+                    "De repente, Lorena a afasta, trocando suas posições mais uma vez, e quase joga Eduarda contra a pia.",
+                    "— Sobe — Lorena quase rosna. — Eu preciso te comer.",
+                    "Eduarda obedece, sentando na pia com um pouco de dificuldade, as pernas trêmulas. Lorena se encaixa entre suas pernas, e retoma o beijo com fome, passando suas mãos do pescoço até a clavícula, e descendo até o decote de Eduarda. Ela coloca sua mão ali, sorrindo contra a boca dela ao sentir o mamilo eriçado. Lorena aperta o seio com vontade, força até, depois desce sua mão ainda mais, até encontrar sua buceta ainda mais molhada e voltar ao clitóris, fazendo movimentos circulares devagar.",
+                    "Eduarda já não aguenta mais, ela precisa que Lorena cumpra o que disse querer fazer.",
+                    "— Me come… — ela fala, entre beijos. — Por favor…",
+                    "Lorena apenas sorri, empurrando o tronco de Eduarda um pouco para trás com a mão que está em seu peito, enquanto a outra desliza dois dedos dentro de Eduarda, que solta um gemido mais alto, alto o suficiente para Lorena calá-la com a própria boca.",
+                    "— Eu preciso que você fique quietinha — Lorena fala quando afasta o rosto, começando um movimento de vai e vem com os dedos. — Você consegue? Hm?",
+                    "Eduarda suspira, balançando a cabeça rápido, concordando. Lorena então aumenta o ritmo, a palma agora batendo em seu clitóris, e Eduarda não aguenta e solta o ar mais alto, o que faz com que Lorena tire a mão de seu corpo e coloque sobre sua boca, apertando forte. Aquilo só deixa Eduarda com mais tesão, e ela sente o orgasmo se aproximar rápido, o desespero aumentando a cada estocada, a mistura de sensações sendo demais para ela.",
+                    "Lorena coloca a boca em seu pescoço, passando a língua e deixando beijos molhados por ali. Eduarda sente as pernas tremerem descontroladamente e, para não gritar, ela morde a palma de Lorena, enquanto tem um dos orgasmos mais rápidos de sua vida.",
+                    "Lorena tira os dedos devagar, com um sorriso, e tira a mão que estava cobrindo seus lábios, apenas para colocar os dedos molhados em sua boca, a forçando a chupá-los. Eduarda afasta seus lábios devagar, e quase se joga para trás, se escorando no espelho, respirando pesado.",
+                    "— Meu deus — é tudo que ela consegue dizer.",
+                    "Lorena apenas sorri e abre a torneira, lavando as mãos sem pressa alguma.",
+                    "— Eu acho que a gente precisa voltar — Lorena fala, depois de secar as mãos. — Sua mãe vai estranhar…",
+                    "Eduarda pisca algumas vezes, sem entender a rapidez da mudança de postura de Lorena. Não parecia estar ligando muito para nada disso quando se jogou para cima dela, feito uma onça faminta.",
+                    "— Mas… — Eduarda começa, endireitando a postura, sem saber o que vinha depois.",
+                    "— Depois a gente continua — é o que Lorena fala, sorrindo, antes de colocar as mãos no rosto de Eduarda e puxá-la para um beijo lento, quase calmo, quase…",
+                    "Seus lábios se afastam com um estalo, e Eduarda sente falta do contato imediatamente, o coração parecendo ficar menor a cada segundo longe de Lorena. A garota sorri de novo, e então se vira, saindo do banheiro.",
+                    "— Pode pegar qualquer roupa aqui? — Lorena pergunta, já fora de seu campo de visão.",
+                    "— Pode, pode sim — Eduarda responde e volta a se encostar no espelho, percebendo, no pior momento possível, que Paulinho tinha razão.",
+                    "A verdade a atingiu com os dois pés no peito: não só tinha sentimentos por Lorena, mas também a certeza de que aquilo não passaria tão cedo; talvez nunca."
+                ]
             }
         ];
 
@@ -2493,9 +3127,531 @@
         let readerFontSize = 14; // in px
         let isDarkTheme = false;
 
+        // Comments: localStorage works immediately; Firebase enables shared comments across visitors.
+        const firebaseConfig = {
+            apiKey: "AIzaSyAS_k_fzLleCldUqlWQzdLIfyBFZorlXrs",
+            authDomain: "brat-69494.firebaseapp.com",
+            projectId: "brat-69494",
+            storageBucket: "brat-69494.firebasestorage.app",
+            messagingSenderId: "745962928998",
+            appId: "1:745962928998:web:5fd3e37942857c07e366a7",
+            measurementId: "G-8VBVJM9XJ3"
+        };
+        let commentsDb = null;
+        let commentsAuthReady = false;
+        let commentsUnsubscribe = null;
+        let currentComments = [];
+        let selectedCommentParagraph = null;
+        let selectedCommentQuote = "";
+        let commentsStorageMode = "local";
+        const commentsStorageKey = "brat_paragraph_comments_v1";
+
+        function firebaseIsConfigured() {
+            return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
+        }
+
+        function firebaseErrorMessage(error) {
+            const code = error?.code || "";
+            if (code === "permission-denied" || code === "firestore/permission-denied")
+                return "Acesso negado pelo Firestore. Confira as regras de segurança da coleção brat_comments.";
+            if (code.includes("operation-not-allowed"))
+                return "Ative o provedor Anônimo em Firebase Authentication → Sign-in method.";
+            if (code.includes("unauthorized-domain"))
+                return "Adicione o domínio do site aos domínios autorizados do Firebase Authentication.";
+            if (code.includes("network") || code === "unavailable")
+                return "Não foi possível conectar ao Firebase. Confira sua internet e tente novamente.";
+            return `Erro no Firebase (${code || error?.message || "desconhecido"}). Confira o console.`;
+        }
+
+        async function initializeCommentsStorage() {
+            if (!firebaseIsConfigured() || typeof firebase === "undefined") {
+                setCommentsStatus("Comentários não podem ser enviados.");
+                return;
+            }
+            try {
+                if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                commentsDb = firebase.firestore();
+                setCommentsStatus("Conectando...");
+                await firebase.auth().signInAnonymously();
+                commentsAuthReady = true;
+                commentsStorageMode = "firebase";
+                setCommentsStatus("Pronto para comentar");
+                loadChapterComments();
+            } catch (error) {
+                commentsAuthReady = false;
+                commentsStorageMode = "unavailable";
+                console.error("Falha ao inicializar Firebase:", error);
+                setCommentsStatus(firebaseErrorMessage(error));
+            }
+        }
+
+        function setCommentsStatus(message) {
+            const el = document.getElementById("comments-status");
+            if (el) el.textContent = message;
+        }
+
+        function getLocalComments() {
+            try { return JSON.parse(localStorage.getItem(commentsStorageKey) || "[]"); }
+            catch { return []; }
+        }
+
+        function saveLocalComments(comments) {
+            localStorage.setItem(commentsStorageKey, JSON.stringify(comments));
+        }
+
+        function loadChapterComments() {
+            if (commentsUnsubscribe) {
+                commentsUnsubscribe();
+                commentsUnsubscribe = null;
+            }
+            if (commentsStorageMode === "firebase" && commentsDb && commentsAuthReady) {
+                commentsUnsubscribe = commentsDb.collection("brat_comments")
+                    .where("chapterId", "==", currentChapterId)
+                    .onSnapshot(snapshot => {
+                        currentComments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        renderParagraphCommentCounts();
+                        renderCommentsList();
+                    }, error => {
+                        console.error("Erro ao carregar comentários:", error);
+                        setCommentsStatus(firebaseErrorMessage(error));
+                    });
+            } else {
+                currentComments = getLocalComments().filter(c => Number(c.chapterId) === Number(currentChapterId));
+                renderParagraphCommentCounts();
+                renderCommentsList();
+            }
+        }
+
+        // ===== Pop-up de comentários: bottom sheet no celular, barra lateral no desktop =====
+        // Fonte única do breakpoint (precisa bater com o @media (max-width: 800px) do CSS).
+        const mobileCommentsQuery = window.matchMedia("(max-width: 800px)");
+        function isMobileComments() { return mobileCommentsQuery.matches; }
+
+        let commentsScrollY = 0;
+        let commentsReturnFocus = null;
+        let commentsHistoryPushed = false;
+
+        // Trava a rolagem da página atrás do pop-up (funciona também no iOS Safari).
+        function lockPageScroll() {
+            if (document.body.classList.contains("comments-modal-open")) return;
+            commentsScrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+            document.body.style.top = `-${commentsScrollY}px`;
+            document.body.classList.add("comments-modal-open");
+        }
+        function unlockPageScroll() {
+            if (!document.body.classList.contains("comments-modal-open")) return;
+            document.body.classList.remove("comments-modal-open");
+            document.body.style.top = "";
+            const root = document.documentElement;
+            const previous = root.style.scrollBehavior;
+            root.style.scrollBehavior = "auto"; // volta na hora, mesmo que a página use rolagem suave
+            window.scrollTo(0, commentsScrollY);
+            root.style.scrollBehavior = previous;
+        }
+
+        // Teclado virtual: o navegador só encolhe a "visual viewport"; sem isto o campo de texto fica escondido atrás do teclado.
+        // No Safari/iOS os eventos de resize/scroll chegam em rajadas durante a animação do teclado; por isso a
+        // atualização é agrupada em um requestAnimationFrame e o offset é zerado na hora quando o campo perde o foco
+        // (senão o pop-up fica "flutuando" com um vão enquanto o teclado fecha).
+        let commentsSyncFrame = 0;
+        function applyCommentsViewport() {
+            commentsSyncFrame = 0;
+            const sheet = document.getElementById("reader-comments");
+            const vv = window.visualViewport;
+            if (!sheet || !vv || !sheet.classList.contains("comments-open")) return;
+            const keyboard = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+            sheet.style.setProperty("--kb-offset", `${keyboard > 80 ? keyboard : 0}px`); // ignora ruído (barra de endereço etc.)
+            sheet.style.setProperty("--vv-max", `${Math.round(vv.height * 0.96)}px`);
+        }
+        function syncCommentsViewport() {
+            if (commentsSyncFrame) return;
+            commentsSyncFrame = requestAnimationFrame(applyCommentsViewport);
+        }
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", syncCommentsViewport);
+            window.visualViewport.addEventListener("scroll", syncCommentsViewport);
+        }
+        document.addEventListener("focusin", e => {
+            const sheet = document.getElementById("reader-comments");
+            if (!isMobileComments() || !sheet || !sheet.classList.contains("comments-open") || !sheet.contains(e.target)) return;
+            if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+            // O iOS rola a página sozinho para mostrar o campo; desfaz isso (o body está travado) e deixa o pop-up se ajustar.
+            setTimeout(() => {
+                syncCommentsViewport();
+                try { e.target.scrollIntoView({ block: "nearest", behavior: "auto" }); } catch (err) {}
+            }, 350);
+        });
+        document.addEventListener("focusout", e => {
+            const sheet = document.getElementById("reader-comments");
+            if (!sheet || !sheet.classList.contains("comments-open") || !sheet.contains(e.target)) return;
+            // Se o foco foi para outro campo do pop-up, o teclado continua aberto: não mexe.
+            setTimeout(() => {
+                if (sheet.contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+                sheet.style.setProperty("--kb-offset", "0px");
+                syncCommentsViewport();
+            }, 0);
+        });
+
+        // Botão "voltar" do Android / gesto de voltar do iOS fecha o pop-up em vez de sair da leitura.
+        function pushCommentsHistory() {
+            if (commentsHistoryPushed) return;
+            try {
+                history.pushState({ bratComments: true }, "", location.href);
+                commentsHistoryPushed = true;
+            } catch (e) { /* sem histórico: o pop-up continua funcionando */ }
+        }
+        window.addEventListener("popstate", () => {
+            const sheet = document.getElementById("reader-comments");
+            if (sheet && sheet.classList.contains("comments-open")) {
+                commentsHistoryPushed = false;
+                closeCommentsModal({ fromHistory: true });
+            }
+        });
+
+        function openCommentsModal() {
+            if (!isMobileComments()) return;
+            const sheet = document.getElementById("reader-comments");
+            const backdrop = document.getElementById("comments-backdrop");
+            if (!sheet || !backdrop) return;
+            if (!sheet.classList.contains("comments-open")) {
+                commentsReturnFocus = document.activeElement;
+                pushCommentsHistory(); // antes de travar a rolagem, para o histórico guardar a posição real
+                lockPageScroll();
+                sheet.classList.add("comments-open");
+                backdrop.classList.add("comments-open");
+                sheet.setAttribute("role", "dialog");
+                sheet.setAttribute("aria-modal", "true");
+                sheet.setAttribute("aria-labelledby", "comments-dialog-title");
+                sheet.scrollTop = 0;
+            }
+            applyCommentsViewport();
+            const closeButton = document.getElementById("comments-close-button");
+            if (closeButton) closeButton.focus({ preventScroll: true });
+        }
+
+        function closeCommentsModal(options) {
+            const fromHistory = !!(options && options.fromHistory);
+            const sheet = document.getElementById("reader-comments");
+            const backdrop = document.getElementById("comments-backdrop");
+            if (!sheet || !backdrop) return;
+            const wasOpen = sheet.classList.contains("comments-open");
+            if (wasOpen && sheet.contains(document.activeElement)) document.activeElement.blur(); // recolhe o teclado
+            sheet.classList.remove("comments-open");
+            backdrop.classList.remove("comments-open");
+            sheet.removeAttribute("role");
+            sheet.removeAttribute("aria-modal");
+            sheet.removeAttribute("aria-labelledby");
+            sheet.style.removeProperty("--kb-offset");
+            sheet.style.removeProperty("--vv-max");
+            unlockPageScroll();
+            if (commentsHistoryPushed) {
+                commentsHistoryPushed = false;
+                if (!fromHistory) { try { history.back(); } catch (e) {} }
+            }
+            if (wasOpen && commentsReturnFocus && commentsReturnFocus !== document.body && document.contains(commentsReturnFocus)) {
+                try { commentsReturnFocus.focus({ preventScroll: true }); } catch (e) {}
+            }
+            commentsReturnFocus = null;
+            if (wasOpen) setTimeout(updateSelectionChip, 0);
+        }
+        document.addEventListener("keydown", e => { if (e.key === "Escape") closeCommentsModal(); });
+        (function watchCommentsBreakpoint() {
+            const onChange = e => { if (!e.matches) closeCommentsModal(); };
+            if (mobileCommentsQuery.addEventListener) mobileCommentsQuery.addEventListener("change", onChange);
+            else if (mobileCommentsQuery.addListener) mobileCommentsQuery.addListener(onChange); // Safari < 14
+        })();
+
+        // ===== Seleção de parágrafos/trechos =====
+        // Índices antigos = posição entre os <p> (comentários já salvos continuam apontando pro lugar certo).
+        // Blocos que não são <p> recebem COMMENT_BLOCK_INDEX_OFFSET + posição*1000 (+ nº da mensagem, nos chats).
+        const COMMENT_BLOCK_INDEX_OFFSET = 10000;
+        const COMMENT_QUOTE_MAX = 500;
+        let selectionActiveOnPress = false;
+        let pendingChipSelection = null;
+        let chipSelectionTimer = null;
+        let chipPressed = false;
+
+        function normalizeQuote(text) {
+            const clean = String(text || "").replace(/\s+/g, " ").trim();
+            return clean.length > COMMENT_QUOTE_MAX ? clean.slice(0, COMMENT_QUOTE_MAX).trimEnd() + "…" : clean;
+        }
+
+        function getParagraphLabel(index) {
+            const el = document.querySelector(`#read-chapter-text [data-paragraph-index="${Number(index)}"]`);
+            if (el && el.dataset.paragraphNumber) return `Parágrafo ${el.dataset.paragraphNumber}`;
+            return Number(index) < COMMENT_BLOCK_INDEX_OFFSET ? `Parágrafo ${Number(index) + 1}` : "Trecho";
+        }
+
+        function selectCommentParagraph(index, quote = "", options = {}) {
+            selectedCommentParagraph = Number(index);
+            selectedCommentQuote = normalizeQuote(quote);
+            let target = null;
+            document.querySelectorAll(".commentable-paragraph").forEach(p => {
+                const active = Number(p.dataset.paragraphIndex) === selectedCommentParagraph;
+                p.classList.toggle("comment-active", active);
+                if (active) target = p;
+            });
+            const label = document.getElementById("comment-target-label");
+            if (label) label.textContent = `Capítulo ${currentChapterId} · ${getParagraphLabel(selectedCommentParagraph)}`;
+            const preview = document.getElementById("comment-quote-preview");
+            if (preview) {
+                // Com seleção: mostra o trecho (ele será salvo). Sem seleção: só lembra qual é o parágrafo
+                // (útil no celular, onde o pop-up cobre o texto); isso NÃO é salvo no comentário.
+                let shown = selectedCommentQuote;
+                if (!shown && target) {
+                    const snippet = normalizeQuote(target.innerText || target.textContent);
+                    shown = snippet.length > 140 ? snippet.slice(0, 140).trimEnd() + "…" : snippet;
+                }
+                preview.textContent = shown ? `“${shown}”` : "";
+                preview.classList.toggle("hidden", !shown);
+            }
+            renderCommentsList();
+            if (options.openPanel !== false) openCommentsModal();
+        }
+
+        function clearCommentTarget() {
+            selectedCommentParagraph = null;
+            selectedCommentQuote = "";
+            document.querySelectorAll(".commentable-paragraph").forEach(p => p.classList.remove("comment-active"));
+            document.getElementById("comment-target-label").textContent = "Toque ou clique em um parágrafo para comentar.";
+            document.getElementById("comment-quote-preview").classList.add("hidden");
+            renderCommentsList();
+        }
+
+        // Texto selecionado dentro do capítulo, ancorado no primeiro bloco de texto que a seleção toca
+        // (a seleção pode atravessar vários parágrafos, chats, etc.).
+        function getCommentSelection() {
+            const container = document.getElementById("read-chapter-text");
+            const selection = window.getSelection ? window.getSelection() : null;
+            if (!container || !selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+            const range = selection.getRangeAt(0);
+            if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) return null;
+            const quote = normalizeQuote(selection.toString());
+            if (!quote) return null;
+            const block = Array.from(container.querySelectorAll(".commentable-paragraph")).find(el => range.intersectsNode(el));
+            if (!block) return null;
+            return { block, index: Number(block.dataset.paragraphIndex), quote };
+        }
+
+        function handleCommentableClick(event) {
+            const block = event.target && event.target.closest ? event.target.closest(".commentable-paragraph") : null;
+            if (!block) return;
+            const selection = getCommentSelection();
+            // No celular, um toque que só desfez/criou uma seleção de texto não deve abrir o pop-up:
+            // para comentar um trecho existe o botão "Comentar trecho".
+            if (isMobileComments() && (selectionActiveOnPress || selection)) return;
+            selectCommentParagraph(block.dataset.paragraphIndex, selection && selection.block === block ? selection.quote : "");
+        }
+
+        // Desktop: soltar o mouse com texto selecionado comenta o trecho (a barra lateral já está visível).
+        function handleCommentableMouseUp() {
+            if (isMobileComments()) return;
+            const selection = getCommentSelection();
+            if (selection) selectCommentParagraph(selection.index, selection.quote);
+        }
+
+        function updateSelectionChip() {
+            const chip = document.getElementById("comment-selection-chip");
+            if (!chip || chipPressed) return;
+            const sheet = document.getElementById("reader-comments");
+            const sheetOpen = !!(sheet && sheet.classList.contains("comments-open"));
+            pendingChipSelection = isMobileComments() && !sheetOpen ? getCommentSelection() : null;
+            chip.classList.toggle("visible", !!pendingChipSelection);
+        }
+        document.addEventListener("selectionchange", () => {
+            clearTimeout(chipSelectionTimer);
+            chipSelectionTimer = setTimeout(updateSelectionChip, 200); // espera o usuário terminar de arrastar as alças
+        });
+
+        function commentOnPendingSelection() {
+            const info = pendingChipSelection;
+            chipPressed = false;
+            if (!info) return;
+            pendingChipSelection = null;
+            const chip = document.getElementById("comment-selection-chip");
+            if (chip) chip.classList.remove("visible");
+            selectCommentParagraph(info.index, info.quote);
+            const selection = window.getSelection();
+            if (selection) selection.removeAllRanges(); // some com as alças/menu nativos atrás do pop-up
+        }
+
+        function setupParagraphCommentSelection() {
+            const container = document.getElementById("read-chapter-text");
+            if (!container) return;
+            let legacyParagraphCount = 0;
+            const units = [];
+            // Cada item do capítulo vira UM filho direto do container: <p> ou <div> (chat, poema, linha recuada...).
+            Array.from(container.children).forEach((block, position) => {
+                const isParagraph = block.tagName === "P";
+                const legacyIndex = legacyParagraphCount;
+                legacyParagraphCount += isParagraph ? 1 : block.querySelectorAll("p").length; // o <p> do divisor "◇" também contava
+                if (block.classList.contains("chat-block")) {
+                    // Chat: cada mensagem é um "parágrafo" (há conversas com mais de 60 mensagens)
+                    Array.from(block.children).forEach((message, sub) => units.push({
+                        el: message, index: COMMENT_BLOCK_INDEX_OFFSET + position * 1000 + sub + 1, anyText: true
+                    }));
+                } else {
+                    units.push({
+                        el: block, index: isParagraph ? legacyIndex : COMMENT_BLOCK_INDEX_OFFSET + position * 1000, anyText: false
+                    });
+                }
+            });
+            let number = 0;
+            units.forEach(unit => {
+                const text = unit.el.textContent || "";
+                // Ornamentos (◇, ***) não são texto; numa mensagem de chat qualquer conteúdo (até só um emoji) conta.
+                if (unit.anyText ? !text.trim() : !/[\p{L}\p{N}]/u.test(text)) return;
+                unit.el.classList.add("commentable-paragraph");
+                if (unit.index >= COMMENT_BLOCK_INDEX_OFFSET) unit.el.classList.add("commentable-block");
+                unit.el.dataset.paragraphIndex = unit.index;
+                unit.el.dataset.paragraphNumber = ++number;
+                unit.el.title = "Toque ou clique para comentar";
+            });
+            if (!container.dataset.commentEventsBound) { // o container é reaproveitado entre capítulos: liga uma vez só
+                container.dataset.commentEventsBound = "1";
+                container.addEventListener("pointerdown", () => {
+                    const s = window.getSelection();
+                    selectionActiveOnPress = !!(s && !s.isCollapsed && s.toString().trim());
+                }, { passive: true });
+                container.addEventListener("click", handleCommentableClick);
+                container.addEventListener("mouseup", handleCommentableMouseUp);
+            }
+            const chip = document.getElementById("comment-selection-chip");
+            if (chip && !chip.dataset.bound) {
+                chip.dataset.bound = "1";
+                // Mantém o trecho "congelado" enquanto o dedo toca o botão (o toque pode limpar a seleção nativa).
+                chip.addEventListener("pointerdown", () => { chipPressed = true; setTimeout(() => { chipPressed = false; }, 900); });
+            }
+        }
+
+        async function addParagraphComment() {
+            const draft = document.getElementById("comment-draft");
+            const authorInput = document.getElementById("comment-author");
+            const author = authorInput.value.trim();
+            const text = draft.value.trim();
+            if (!author) {
+                setCommentsStatus("Informe seu nome ou apelido para enviar o comentário.");
+                authorInput.focus();
+                return;
+            }
+            if (selectedCommentParagraph === null) {
+                setCommentsStatus("Primeiro toque no parágrafo que deseja comentar.");
+                return;
+            }
+            if (!text) {
+                setCommentsStatus("Escreva um comentário antes de enviar.");
+                draft.focus();
+                return;
+            }
+            if (!commentsAuthReady || !commentsDb || commentsStorageMode !== "firebase") {
+                setCommentsStatus("Aguarde a conexão com o Firebase antes de enviar. Se persistir, confira a configuração.");
+                return;
+            }
+            const comment = {
+                chapterId: currentChapterId,
+                paragraphIndex: selectedCommentParagraph,
+                quote: selectedCommentQuote,
+                text,
+                author,
+                uid: commentsStorageMode === "firebase" && firebase.auth().currentUser ? firebase.auth().currentUser.uid : "local",
+                createdAt: Date.now()
+            };
+            try {
+                await commentsDb.collection("brat_comments").add({
+                    ...comment,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                draft.value = "";
+                if (isMobileComments()) draft.blur(); // recolhe o teclado para o comentário novo aparecer na lista
+                setCommentsStatus("Comentário salvo.");
+            } catch (error) {
+                console.error(error);
+                setCommentsStatus(firebaseErrorMessage(error));
+            }
+        }
+
+        async function deleteParagraphComment(id) {
+            if (!confirm("Excluir este comentário?")) return;
+            try {
+                if (commentsStorageMode === "firebase" && commentsDb && commentsAuthReady) {
+                    await commentsDb.collection("brat_comments").doc(id).delete();
+                } else {
+                    const all = getLocalComments().filter(c => c.id !== id);
+                    saveLocalComments(all);
+                    currentComments = all.filter(c => Number(c.chapterId) === Number(currentChapterId));
+                    renderParagraphCommentCounts();
+                    renderCommentsList();
+                }
+            } catch (error) {
+                console.error(error);
+                setCommentsStatus("Não foi possível excluir o comentário.");
+            }
+        }
+
+        function renderParagraphCommentCounts() {
+            document.querySelectorAll(".commentable-paragraph").forEach(p => {
+                const count = currentComments.filter(c => Number(c.paragraphIndex) === Number(p.dataset.paragraphIndex)).length;
+                p.classList.toggle("has-comments", count > 0);
+                if (count) p.dataset.commentCount = count;
+                else delete p.dataset.commentCount;
+            });
+            const total = document.getElementById("comments-total");
+            if (total) total.textContent = currentComments.length;
+            const floatingTotal = document.getElementById("comments-floating-total");
+            if (floatingTotal) floatingTotal.textContent = currentComments.length;
+        }
+
+        function renderCommentsList() {
+            const list = document.getElementById("comments-list");
+            if (!list) return;
+            const comments = selectedCommentParagraph === null
+                ? currentComments
+                : currentComments.filter(c => Number(c.paragraphIndex) === selectedCommentParagraph);
+            if (!comments.length) {
+                list.innerHTML = `<p class="text-xs text-bible-text/60 italic">${selectedCommentParagraph === null ? "Ainda não há comentários neste capítulo. Toque ou clique em um parágrafo para começar." : "Este parágrafo ainda não tem comentários. Seja a primeira pessoa a comentar!"}</p>`;
+                return;
+            }
+            comments.sort((a,b) => {
+                const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : Number(a.createdAt || 0);
+                const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : Number(b.createdAt || 0);
+                return ta - tb;
+            });
+            list.innerHTML = comments.map(c => {
+                const quote = c.quote ? `<div class="comment-quote">“${escapeCommentHtml(c.quote)}”</div>` : "";
+                const dateValue = c.createdAt?.toDate ? c.createdAt.toDate() : new Date(c.createdAt || Date.now());
+                const date = dateValue.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+                const canDelete = commentsStorageMode !== "firebase" || (firebase.auth().currentUser && c.uid === firebase.auth().currentUser.uid);
+                return `<div class="comment-card">
+                    <div class="flex items-center justify-between gap-2">
+                        <strong class="text-[11px]">${escapeCommentHtml(c.author || "Leitor(a)")}</strong>
+                        <span class="text-[9px] text-gray-400">${date}</span>
+                    </div>
+                    <button type="button" class="text-[9px] text-bible-gold underline mt-1" onclick="jumpToCommentParagraph(${Number(c.paragraphIndex)})">${getParagraphLabel(c.paragraphIndex)}</button>
+                    ${quote}
+                    <p class="text-xs leading-relaxed mt-2 whitespace-pre-wrap">${escapeCommentHtml(c.text)}</p>
+                    ${canDelete ? `<div class="text-right mt-2"><button class="comment-delete" onclick="deleteParagraphComment('${String(c.id).replace(/'/g, "")}')">Excluir</button></div>` : ""}
+                </div>`;
+            }).join("");
+        }
+
+        function escapeCommentHtml(value) {
+            return String(value).replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
+        }
+
+        function jumpToCommentParagraph(index) {
+            const paragraph = document.querySelector(`#read-chapter-text [data-paragraph-index="${Number(index)}"]`);
+            if (!paragraph) return;
+            selectCommentParagraph(index, "", { openPanel: false });
+            const mobile = isMobileComments();
+            if (mobile) closeCommentsModal(); // no celular o pop-up cobre o texto: fecha antes de rolar
+            // No celular espera o pop-up terminar de fechar (rolagem da página restaurada) antes de rolar até o parágrafo.
+            setTimeout(() => paragraph.scrollIntoView({ behavior: "smooth", block: "center" }), mobile ? 220 : 0);
+        }
+
         // Initialize Page and SPA Router
         document.addEventListener("DOMContentLoaded", () => {
             renderChapters(chaptersData);
+            initializeCommentsStorage();
 
             // Track Scroll Progress in Reader Mode
             window.addEventListener('scroll', updateReadingProgress);
@@ -2510,11 +3666,12 @@
             const hash = window.location.hash;
             if (hash.startsWith("#capitulo-")) {
                 const chapNum = parseInt(hash.replace("#capitulo-", ""), 10);
-                if (chapNum >= 1 && chapNum <= 7) {
+                if (chapNum >= 1 && chapNum <= 8) {
                     openChapterReader(chapNum, false);
                     return;
                 }
             }
+            if (hash === "#mapa") { switchTab('mapa', false); return; }
             if (hash === "#capitulos") {
                 switchTab('capitulos', false);
             } else {
@@ -2543,7 +3700,10 @@
             
             const textContainer = document.getElementById("read-chapter-text");
             textContainer.style.fontSize = `${readerFontSize}px`;
-            textContainer.innerHTML = chap.content.map(p => p.trim().startsWith("<div") ? p : `<p class="indent-4 leading-relaxed">${p}</p>`).join("");
+            textContainer.innerHTML = chap.content.map(p => p.trim().startsWith("<div") ? p : `<p class="leading-relaxed">${p}</p>`).join("");
+            clearCommentTarget();
+            setupParagraphCommentSelection();
+            loadChapterComments();
 
             // Setup Prev / Next Navigation Buttons
             const prevBtn = document.getElementById("prev-chap-btn");
@@ -2560,6 +3720,8 @@
             } else {
                 nextBtn.classList.remove("opacity-40", "pointer-events-none");
             }
+
+            document.body.classList.add("reading-chapter");
 
             // Hide Main Tabs & Show Reader Tab View
             document.querySelectorAll(".tab-content").forEach(el => el.classList.add("hidden"));
@@ -2592,20 +3754,59 @@
             }
         }
 
+
+        // Mensagem aleatória da Lorena ou Eduarda ao esvaziar a taça.
+        let wineMessageTimer;
+        let lastWineSender = null;
+        let lastWineMessageIndex = -1;
+        function dismissWineMessage() {
+            document.getElementById('wine-notification').classList.remove('visible');
+        }
+        function showWineMessage() {
+            const messages = [
+                'tá acordada? rs',
+                'oi... tá aí?',
+                'eu sei que hoje não é sexta, mas... quer tomar um vinho comigo?',
+                'amiga eu tenho uma ideia mas vc tem que ser mente aberta'
+            ];
+            const sender = lastWineSender === null
+                ? (Math.random() < .5 ? 'Lorena' : 'Eduarda')
+                : (lastWineSender === 'Lorena' ? 'Eduarda' : 'Lorena');
+            const availableIndexes = messages.map((_, i) => i).filter(i => i !== lastWineMessageIndex);
+            const messageIndex = availableIndexes[Math.floor(Math.random() * availableIndexes.length)];
+            const message = messages[messageIndex];
+            lastWineSender = sender;
+            lastWineMessageIndex = messageIndex;
+            const button = document.getElementById('wine-message-button');
+            const toast = document.getElementById('wine-notification');
+            clearTimeout(wineMessageTimer);
+            document.getElementById('wine-sender').textContent = '💬 ' + sender;
+            document.getElementById('wine-text').textContent = message;
+            button.classList.add('is-empty');
+            toast.classList.add('visible');
+            wineMessageTimer = setTimeout(() => {
+                dismissWineMessage();
+                button.classList.remove('is-empty');
+            }, 6500);
+        }
+
         // Reading Theme Toggle (Dark / Light)
         function toggleReadTheme() {
             isDarkTheme = !isDarkTheme;
             const paper = document.getElementById("reader-paper");
             const controls = document.getElementById("reader-controls");
             const toggleBtn = document.getElementById("theme-toggle-btn");
+            const commentsPanel = document.getElementById("reader-comments");
 
             if (isDarkTheme) {
                 paper.classList.add("read-dark");
                 controls.classList.add("read-dark");
+                commentsPanel.classList.add("read-dark");
                 toggleBtn.innerText = "☀️";
             } else {
                 paper.classList.remove("read-dark");
                 controls.classList.remove("read-dark");
+                commentsPanel.classList.remove("read-dark");
                 toggleBtn.innerText = "🌙";
             }
         }
@@ -2675,8 +3876,114 @@
             renderChapters(filtered);
         }
 
+
+        const bratPlaces = {
+            eduarda:  { name:'Casa de Eduarda',          neighborhood:'Vila Madalena', chapter:1, hot:true,  lat:-23.5545, lng:-46.6905, dir:'t' },
+            lorena:   { name:'Casa de Lorena e Gerluce', neighborhood:'Pinheiros',     chapter:3, hot:true,  lat:-23.5666, lng:-46.6825, dir:'b' },
+            puc:      { name:'PUC-SP Direito',           neighborhood:'Perdizes',      chapter:4, hot:false, lat:-23.5372, lng:-46.6692, dir:'t' },
+            beco:     { name:'Beco da USP',              neighborhood:'Butantã',       chapter:4, hot:false, lat:-23.5600, lng:-46.7305, dir:'b' },
+            caixote:  { name:'Caixote Bar',              neighborhood:'Rua Augusta',   chapter:5, hot:true,  lat:-23.5537, lng:-46.6590, dir:'b' },
+            fragosos: { name:'Casa dos Fragosos',        neighborhood:'Higienópolis',  chapter:8, hot:true,  lat:-23.5442, lng:-46.6585, dir:'r' }
+        };
+        // Opcional: cole aqui sua chave gratuita do MapTiler (cloud.maptiler.com). Vazio = usa o mapa da Esri, sem chave.
+        const BRAT_MAPTILER_KEY = '';
+        const bratLabel = p => '📍 ' + p.name + (p.hot ? ' 🔥' : '');
+        let bratMap = null, bratTrail = null, bratTour = false, bratTimer = null, bratCurrent = null;
+        const bratMarkers = {};
+
+        function bratGo(ll, zoom, secs) {
+            if (window.matchMedia('(prefers-reduced-motion:reduce)').matches) bratMap.setView(ll, zoom, { animate:false });
+            else bratMap.flyTo(ll, zoom, { duration:secs });
+        }
+        function bratFitAll() {
+            const pts = Object.values(bratPlaces).map(p => [p.lat, p.lng]);
+            bratMap.fitBounds(pts, { paddingTopLeft:[40,80], paddingBottomRight:[110,170], animate:false });
+        }
+        function initBratMap() {
+            const el = document.getElementById('brat-map-canvas');
+            if (bratMap) { bratMap.invalidateSize(); return; }
+            if (typeof L === 'undefined') {
+                el.innerHTML = '<p style="padding:90px 24px;color:#aebd9c;font-size:12px">Não foi possível carregar o mapa. Verifique sua conexão e recarregue a página.</p>';
+                selectMapPlace(null);
+                return;
+            }
+            bratMap = L.map(el, { zoomControl:false, attributionControl:false, zoomSnap:.25, minZoom:10, maxZoom:18 });
+            L.control.zoom({ position:'topright' }).addTo(bratMap);
+            let credit;
+            if (BRAT_MAPTILER_KEY) {
+                L.tileLayer('https://api.maptiler.com/maps/streets-v2-dark/256/{z}/{x}/{y}.png?key=' + BRAT_MAPTILER_KEY, { maxZoom:19 }).addTo(bratMap);
+                credit = 'Mapa © MapTiler © colaboradores do OpenStreetMap';
+            } else {
+                el.classList.add('bm-boost');
+                const esri = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+                L.tileLayer(esri + 'World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom:16, maxZoom:18 }).addTo(bratMap);
+                L.tileLayer(esri + 'World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom:16, maxZoom:18 }).addTo(bratMap);
+                credit = 'Mapa © Esri, HERE, Garmin, © OpenStreetMap';
+            }
+            document.getElementById('bm-credit').textContent = '🔥 marca locais de encontros íntimos · Posições aproximadas · ' + credit;
+            bratTrail = L.polyline([], { color:'#8cff0b', weight:3, opacity:.85, dashArray:'2 9', lineCap:'round' }).addTo(bratMap);
+            Object.entries(bratPlaces).forEach(([key, p]) => {
+                const icon = L.divIcon({
+                    className:'bp-wrap', iconSize:[0,0],
+                    html:`<div class="bp ${p.hot ? 'hot ' : ''}${p.dir}"><i class="bp-dot"></i><span class="bp-label">${bratLabel(p)}</span></div>`
+                });
+                const m = L.marker([p.lat, p.lng], { icon, keyboard:true, alt:bratLabel(p) }).addTo(bratMap);
+                m.on('click', () => { stopBratTour(); selectMapPlace(key, true); });
+                bratMarkers[key] = m;
+            });
+            bratFitAll();
+            selectMapPlace(null);
+            setTimeout(() => { bratMap.invalidateSize(); if (!bratTour && !bratCurrent) bratFitAll(); }, 300);
+        }
+        function selectMapPlace(key, fly) {
+            const place = bratPlaces[key] || null;
+            bratCurrent = place ? key : null;
+            Object.entries(bratMarkers).forEach(([k, m]) => {
+                const on = k === key;
+                const node = m.getElement();
+                if (node) { const pin = node.querySelector('.bp'); if (pin) pin.classList.toggle('on', on); node.setAttribute('aria-pressed', String(on)); }
+                m.setZIndexOffset(on ? 1000 : 0);
+            });
+            const tourBtn = `<button type="button" class="bm-btn bm-ghost" onclick="${bratTour ? 'stopBratTour()' : 'startBratTour()'}">${bratTour ? 'Parar passeio' : 'Percorrer a história'}</button>`;
+            const detail = document.getElementById('map-place-detail');
+            if (!place) {
+                detail.innerHTML = `<p style="margin:0">Toque em um 📍 para ver o lugar, ou deixe o mapa levar você pela história.</p><div class="bm-row">${tourBtn}</div>`;
+                return;
+            }
+            const read = place.chapter <= 8
+                ? `<button type="button" class="bm-btn bm-go" onclick="goToChapter(${place.chapter})">Ler capítulo ${place.chapter}</button>`
+                : `<span class="bm-soon">Capítulo ${place.chapter} ainda não disponível para leitura</span>`;
+            detail.innerHTML = `<h2>${bratLabel(place)}</h2><p>${place.neighborhood}, São Paulo · primeira aparição no capítulo ${place.chapter}</p><div class="bm-row">${read}${tourBtn}</div>`;
+            if (fly && bratMap) bratGo([place.lat, place.lng], Math.max(bratMap.getZoom(), 15), 1.4);
+        }
+        function startBratTour() {
+            if (!bratMap) return;
+            clearTimeout(bratTimer);
+            bratTour = true;
+            bratTrail.setLatLngs([]);
+            const keys = Object.keys(bratPlaces);
+            let i = 0;
+            const step = () => {
+                if (!bratTour) return;
+                if (i >= keys.length) { stopBratTour(); bratFitAll(); return; }
+                const key = keys[i++], p = bratPlaces[key];
+                bratTrail.addLatLng([p.lat, p.lng]);
+                bratGo([p.lat, p.lng], 15.5, 2.4);
+                selectMapPlace(key);
+                bratTimer = setTimeout(step, 5200);
+            };
+            step();
+        }
+        function stopBratTour() {
+            const was = bratTour;
+            bratTour = false;
+            clearTimeout(bratTimer);
+            if (was) selectMapPlace(bratCurrent);
+        }
+
         // Switch Navigation Tabs
         function switchTab(tab, updateHash = true) {
+            document.body.classList.remove("reading-chapter");
             document.querySelectorAll(".tab-content").forEach(el => el.classList.add("hidden"));
             document.getElementById("read-progress-container").classList.add("hidden");
 
@@ -2684,13 +3991,17 @@
                 btn.className = "nav-btn px-4 py-1.5 rounded-full text-bible-goldLight/80 hover:text-white hover:bg-white/10 transition";
             });
 
-            if (tab === 'capitulos') {
+            if (tab === 'mapa') {
+                document.getElementById('tab-mapa').classList.remove('hidden');
+                initBratMap();
+                document.getElementById('nav-mapa').className = 'nav-btn px-4 py-1.5 rounded-full bg-bible-gold text-bible-darkCard font-semibold shadow transition';
+                if (updateHash) window.location.hash = '#mapa';
+            } else if (tab === 'capitulos') {
                 document.getElementById("tab-capitulos").classList.remove("hidden");
                 document.getElementById("nav-capitulos").className = "nav-btn px-4 py-1.5 rounded-full bg-bible-gold text-bible-darkCard font-semibold shadow transition";
                 if (updateHash) window.location.hash = "#capitulos";
             } else {
                 document.getElementById("tab-home").classList.remove("hidden");
-                document.getElementById("nav-biblia").className = "nav-btn px-4 py-1.5 rounded-full bg-bible-gold text-bible-darkCard font-semibold shadow transition";
                 if (updateHash) window.location.hash = "";
             }
 
